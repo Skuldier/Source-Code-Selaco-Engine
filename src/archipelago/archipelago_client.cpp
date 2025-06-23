@@ -2,16 +2,10 @@
 // A robust WebSocket implementation for Archipelago using websocketpp
 // This replaces the unreliable easywsclient implementation
 
-// WebSocketPP namespace imports
-using websocketpp::lib::error_code;
-using websocketpp::lib::placeholders::_1;
-using websocketpp::lib::placeholders::_2;
-
-
 #include "archipelago_client.h"
 #include "../common/engine/printf.h"
 
-// WebSocketPP includes
+// WebSocketPP includes - Note: paths need to be relative to project root
 #include "../../libraries/websocketpp/config/asio_no_tls_client.hpp"
 #include "../../libraries/websocketpp/client.hpp"
 
@@ -27,6 +21,11 @@ using websocketpp::lib::placeholders::_2;
 #include <thread>
 #include <atomic>
 #include <condition_variable>
+
+// WebSocketPP namespace imports - MUST come after includes
+using websocketpp::lib::error_code;
+using websocketpp::lib::placeholders::_1;
+using websocketpp::lib::placeholders::_2;
 
 // Type definitions for cleaner code
 typedef websocketpp::client<websocketpp::config::asio_client> ws_client;

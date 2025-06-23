@@ -1183,11 +1183,26 @@ set (PCH_SOURCES
 	utility/nodebuilder/nodebuild_utility.cpp
 )
 
+
+# WebSocketPP configuration
+find_package(Threads REQUIRED)
+find_package(Boost COMPONENTS system QUIET)
+
+if(NOT Boost_FOUND)
+    message(STATUS "Boost not found, using standalone ASIO")
+    add_definitions(-DASIO_STANDALONE)
+endif()
+
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/libraries/websocketpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include
+)
+
 # Archipelago integration
 set( ARCHIPELAGO_SOURCES
 	archipelago/archipelago_client.cpp
-	archipelago/easywsclient.cpp
-	archipelago/archipelago_ccmds.cpp )
+	archipelago/archipelago_ccmds.cpp 
+	archipelago/archipelago_client.h)
 
 if( ${HAVE_VM_JIT} )
 	set( PCH_SOURCES ${PCH_SOURCES} ${VM_JIT_SOURCES} )
@@ -1250,10 +1265,12 @@ set( GAME_SOURCES
 
 )
 
-set( GAME_NONPCH_SOURCES ${GAME_SOURCES} )
+set( GAME_NONPCH_SOURCES ${GAME_SOURCES}
+	${ARCHIPELAGO_SOURCES} )
 list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 
-add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
+add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES}
+	${ARCHIPELAGO_SOURCES} )
 
 target_precompile_headers( zdoom PRIVATE g_pch.h )
 
