@@ -1,0 +1,12 @@
+--- a/src/d_main.cpp
++++ b/src/d_main.cpp
+@@ -3012,6 +3012,9 @@ void D_DoomLoop ()
+ 			// Update music when game is paused
+ 			S_UpdateMusic();
+ 		}
++		
++		// Process Archipelago messages
++		Net_ProcessArchipelago();
+ 
+ 		// [RH] Use the consoleplayer's camera to update sounds
+ 		S_UpdateSounds (players[consoleplayer].camera);	// move positional sounds
