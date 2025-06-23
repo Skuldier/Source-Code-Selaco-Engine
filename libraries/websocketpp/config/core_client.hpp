@@ -29,9 +29,9 @@
 #define WEBSOCKETPP_CONFIG_CORE_CLIENT_HPP
 
 // Non-Policy common stuff
-#include <websocketpp/common/platforms.hpp>
-#include <websocketpp/common/cpp11.hpp>
-#include <websocketpp/common/stdint.hpp>
+#include "../../libraries/websocketpp/common/platforms.hpp"
+#include "../../libraries/websocketpp/common/cpp11.hpp"
+#include "../../libraries/websocketpp/common/stdint.hpp"
 
 // Concurrency
 #ifndef _WEBSOCKETPP_NO_THREADING_

@@ -6,8 +6,8 @@
 #include "../common/engine/printf.h"
 
 // WebSocketPP includes
-#include "websocketpp/config/asio_no_tls_client.hpp"
-#include "websocketpp/client.hpp"
+#include "../../libraries/websocketpp/config/asio_no_tls_client.hpp"
+#include "../../libraries/websocketpp/client.hpp"
 
 // JSON handling
 #include "rapidjson/document.h"
