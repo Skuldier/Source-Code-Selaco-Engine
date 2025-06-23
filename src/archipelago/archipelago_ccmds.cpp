@@ -7,7 +7,7 @@
 
 using namespace Archipelago;
 
-// Connect to Archipelago server
+// Connect to Archipelago server (non-blocking)
 CCMD(ap_connect)
 {
     if (argv.argc() < 2) {
@@ -21,6 +21,16 @@ CCMD(ap_connect)
         return;
     }
     
+    // Check current status
+    auto status = g_archipelago->GetConnectionStatus();
+    if (status == ConnectionStatus::Connecting) {
+        Printf("Already attempting to connect...\n");
+        return;
+    } else if (status == ConnectionStatus::Connected || status == ConnectionStatus::InGame) {
+        Printf("Already connected! Use ap_disconnect first.\n");
+        return;
+    }
+    
     std::string host = argv[1];
     int port = 38281;
     
@@ -28,15 +38,11 @@ CCMD(ap_connect)
         port = atoi(argv[2]);
     }
     
-    if (g_archipelago->IsConnected()) {
-        Printf("Already connected! Use ap_disconnect first.\n");
-        return;
-    }
-    
+    Printf("Archipelago: Starting connection to %s:%d...\n", host.c_str(), port);
     if (g_archipelago->Connect(host, port)) {
-        Printf("Connected to Archipelago server at %s:%d\n", host.c_str(), port);
+        Printf("Archipelago: Connection attempt initiated. Use 'ap_status' to check progress.\n");
     } else {
-        Printf("Failed to connect to %s:%d\n", host.c_str(), port);
+        Printf("Archipelago: Failed to start connection attempt.\n");
     }
 }
 
@@ -86,7 +92,7 @@ CCMD(ap_ping)
     g_archipelago->SendPing();
 }
 
-// Show connection status
+// Check connection status
 CCMD(ap_status)
 {
     if (!g_archipelago) {
@@ -94,26 +100,24 @@ CCMD(ap_status)
         return;
     }
     
-    const char* statusStr = "Unknown";
-    switch (g_archipelago->GetStatus()) {
+    auto status = g_archipelago->GetConnectionStatus();
+    switch (status) {
         case ConnectionStatus::Disconnected:
-            statusStr = "Disconnected";
+            Printf("Archipelago: Disconnected\n");
             break;
         case ConnectionStatus::Connecting:
-            statusStr = "Connecting";
+            Printf("Archipelago: Connecting... (please wait)\n");
             break;
         case ConnectionStatus::Connected:
-            statusStr = "Connected (not authenticated)";
+            Printf("Archipelago: Connected (not authenticated)\n");
             break;
         case ConnectionStatus::InGame:
-            statusStr = "In Game";
+            Printf("Archipelago: Connected and authenticated\n");
             break;
         case ConnectionStatus::Error:
-            statusStr = "Error";
+            Printf("Archipelago: Error state - use ap_disconnect to reset\n");
             break;
     }
-    
-    Printf("Archipelago Status: %s\n", statusStr);
 }
 
 // Test location check
@@ -185,5 +189,13 @@ CCMD(ap_debug)
     } else {
         g_archipelago->SetMessageCallback(nullptr);
         Printf("Archipelago debug messages disabled\n");
+    }
+}
+
+// Also update the tick function to process messages
+// This should be called from the game's main loop
+void AP_Tick() {
+    if (g_archipelago) {
+        g_archipelago->ProcessMessages();
     }
 }
