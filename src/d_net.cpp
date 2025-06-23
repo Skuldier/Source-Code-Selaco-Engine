@@ -2886,6 +2886,7 @@ void Net_SkipCommand (int type, uint8_t **stream)
 					skip += strlen ((char *)(*stream + skip)) + 1;
 					break;
 				}
+}
 
 //==========================================================================
 //
@@ -2901,7 +2902,6 @@ void Net_ProcessArchipelago()
 		Archipelago::g_archipelago->ProcessMessages();
 	}
 
-			}
 			else
 			{
 				skip += 1;
