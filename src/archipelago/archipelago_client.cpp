@@ -25,6 +25,17 @@
 #include <atomic>
 #include <condition_variable>
 #include <queue>
+#include <asio/io_service.hpp>
+
+// Network includes for hostname resolution
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "ws2_32.lib")
+#else
+    #include <netdb.h>
+    #include <arpa/inet.h>
+#endif
 
 // Type definitions for cleaner code
 typedef websocketpp::client<websocketpp::config::asio_client> ws_client;
@@ -72,6 +83,15 @@ public:
     // Constructor - sets up the WebSocket client
     Impl() {
         try {
+            #ifdef _WIN32
+            // Initialize Winsock for Windows
+            WSADATA wsaData;
+            int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+            if (result != 0) {
+                Printf("Archipelago: WSAStartup failed: %d\n", result);
+            }
+            #endif
+            
             // Clear access channels and set error channels
             m_client.clear_access_channels(websocketpp::log::alevel::all);
             m_client.set_error_channels(websocketpp::log::elevel::all);
@@ -111,6 +131,9 @@ public:
     // Destructor
     ~Impl() {
         Stop();
+        #ifdef _WIN32
+        WSACleanup();
+        #endif
     }
     
     // Connection handlers
@@ -135,7 +158,15 @@ public:
         m_connect_cv.notify_all();
         
         auto con = m_client.get_con_from_hdl(hdl);
-        Printf("  Error: %s\n", con->get_ec().message().c_str());
+        auto ec = con->get_ec();
+        Printf("  Error code: %d\n", ec.value());
+        Printf("  Error message: %s\n", ec.message().c_str());
+        Printf("  Error category: %s\n", ec.category().name());
+        
+        // Get more details about the connection failure
+        Printf("  Connection state: %d\n", con->get_state());
+        Printf("  HTTP status: %d\n", con->get_response_code());
+        Printf("  HTTP response msg: %s\n", con->get_response_msg().c_str());
     }
     
     void on_message(connection_hdl hdl, message_ptr msg) {
@@ -146,15 +177,24 @@ public:
     void Start() {
         if (!m_running) {
             m_running = true;
+            
+            // Reset the io_service in case it was stopped before
+            m_client.reset();
+            
             m_asio_thread = std::thread([this]() {
-                Printf("Archipelago: ASIO thread started\n");
+                Printf("Archipelago: ASIO thread started (ID: %d)\n", std::this_thread::get_id());
                 try {
+                    // Keep the io_service running even if there's no work
+                    asio::io_service::work work(m_client.get_io_service());
                     m_client.run();
                 } catch (const std::exception& e) {
                     Printf("Archipelago: ASIO thread error: %s\n", e.what());
                 }
                 Printf("Archipelago: ASIO thread ended\n");
             });
+            
+            // Wait a bit to ensure thread is running
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     }
     
@@ -162,7 +202,10 @@ public:
     void Stop() {
         if (m_running) {
             m_running = false;
-            m_client.stop();
+            
+            // Stop the io_service gracefully
+            m_client.get_io_service().stop();
+            
             if (m_asio_thread.joinable()) {
                 m_asio_thread.join();
             }
@@ -209,40 +252,85 @@ ArchipelagoClient::~ArchipelagoClient() {
 // Connect to an Archipelago server
 bool ArchipelagoClient::Connect(const std::string& host, int port) {
     Printf("Archipelago: Connect() called with host=%s, port=%d\n", host.c_str(), port);
+    Printf("Archipelago: WEBSOCKET_DEBUG - Starting connection attempt\n");
+    
+    // Force disconnect if in a bad state
+    if (m_status == ConnectionStatus::Connecting || m_status == ConnectionStatus::Error) {
+        Printf("Archipelago: Forcing disconnect due to bad state\n");
+        Disconnect();
+        // Give it time to clean up
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     
     if (m_status != ConnectionStatus::Disconnected) {
-        Printf("Archipelago: Already connected or connecting\n");
+        Printf("Archipelago: Already connected\n");
         return false;
     }
     
     m_host = host;
     m_port = port;
     
-    // Build the WebSocket URI
+    // Resolve hostname if needed
+    std::string resolved_host = host;
+    
+    // Special handling for localhost
+    if (host == "localhost" || host == "LOCALHOST" || host == "Localhost") {
+        resolved_host = "127.0.0.1";
+        Printf("Archipelago: Resolving localhost to 127.0.0.1\n");
+    } else if (host.find_first_not_of("0123456789.") == std::string::npos) {
+        // Already an IP address
+        Printf("Archipelago: Using IP address directly: %s\n", host.c_str());
+    } else {
+        // Try to resolve hostname
+        Printf("Archipelago: Attempting to resolve hostname: %s\n", host.c_str());
+        
+        struct hostent* he = gethostbyname(host.c_str());
+        if (he != nullptr && he->h_addr_list[0] != nullptr) {
+            struct in_addr addr;
+            memcpy(&addr, he->h_addr_list[0], sizeof(struct in_addr));
+            resolved_host = inet_ntoa(addr);
+            Printf("Archipelago: Resolved %s to %s\n", host.c_str(), resolved_host.c_str());
+        } else {
+            Printf("Archipelago: Failed to resolve hostname %s, using as-is\n", host.c_str());
+        }
+    }
+    
+    // Build the WebSocket URI with resolved host
     std::stringstream uri;
-    uri << "ws://" << host << ":" << port;
+    uri << "ws://" << resolved_host << ":" << port;
     
     Printf("Archipelago: Attempting to connect to: %s\n", uri.str().c_str());
+    Printf("Archipelago: WEBSOCKET_DEBUG - URI: %s\n", uri.str().c_str());
+    Printf("Archipelago: WEBSOCKET_DEBUG - Current status: %d\n", (int)m_status);
     m_status = ConnectionStatus::Connecting;
     
     try {
-        // Start the ASIO thread if not already running
+        // Start the ASIO thread FIRST - this is critical!
         m_impl->Start();
         
+        // Give ASIO thread time to initialize
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
         // Create a new connection
+        Printf("Archipelago: WEBSOCKET_DEBUG - Creating connection object\n");
         websocketpp::lib::error_code ec;
         m_impl->m_connection = m_impl->m_client.get_connection(uri.str(), ec);
+        Printf("Archipelago: WEBSOCKET_DEBUG - Connection object created, ec=%d\n", ec.value());
         
         if (ec) {
             Printf("Archipelago: Failed to create connection: %s\n", ec.message().c_str());
-            m_status = ConnectionStatus::Error;
+            m_status = ConnectionStatus::Disconnected;  // Reset to disconnected
+            m_impl->Stop();  // Stop the ASIO thread
             return false;
         }
         
         // Queue the connection
+        Printf("Archipelago: WEBSOCKET_DEBUG - Queueing connection\n");
         m_impl->m_client.connect(m_impl->m_connection);
+        Printf("Archipelago: WEBSOCKET_DEBUG - Connection queued\n");
         
         // Wait for the connection to be established
+        Printf("Archipelago: WEBSOCKET_DEBUG - Waiting for connection (5 second timeout)\n");
         std::unique_lock<std::mutex> lock(m_impl->m_connect_mutex);
         if (m_impl->m_connect_cv.wait_for(lock, std::chrono::seconds(5), 
             [this]{ return m_impl->m_connected.load(); })) {
@@ -256,13 +344,23 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
             return true;
         } else {
             Printf("Archipelago: Connection attempt timed out\n");
-            m_status = ConnectionStatus::Error;
+            m_status = ConnectionStatus::Disconnected;  // Reset to disconnected
+            
+            // Clean up the failed connection
+            if (m_impl->m_connection) {
+                websocketpp::lib::error_code ec;
+                m_impl->m_client.close(m_impl->m_connection, 
+                                       websocketpp::close::status::going_away, 
+                                       "Connection timeout", ec);
+            }
+            m_impl->Stop();  // Stop the ASIO thread
             return false;
         }
         
     } catch (const std::exception& e) {
         Printf("Archipelago: Connection error: %s\n", e.what());
-        m_status = ConnectionStatus::Error;
+        m_status = ConnectionStatus::Disconnected;  // Reset to disconnected
+        m_impl->Stop();  // Stop the ASIO thread
         return false;
     }
 }
@@ -318,6 +416,10 @@ void ArchipelagoClient::Disconnect() {
     }
     
     m_impl->Stop();
+    
+    // Reset connection pointer
+    m_impl->m_connection.reset();
+    m_impl->m_connected = false;
     
     m_status = ConnectionStatus::Disconnected;
     m_checkedLocations.clear();
