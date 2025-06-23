@@ -1184,9 +1184,6 @@ set (PCH_SOURCES
 )
 
 
-# WebSocketPP configuration
-find_package(Threads REQUIRED)
-find_package(Boost COMPONENTS system QUIET)
 
 if(NOT Boost_FOUND)
     message(STATUS "Boost not found, using standalone ASIO")
@@ -1204,7 +1201,45 @@ set( ARCHIPELAGO_SOURCES
 	archipelago/archipelago_ccmds.cpp 
 	archipelago/archipelago_client.h)
 
-# WebSocketPP configuration for Archipelago
+# ASIO and WebSocketPP configuration for Archipelago
+# ASIO is required by WebSocketPP for networking
+set( ASIO_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libraries/asio/asio/include" )
+set( WEBSOCKETPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../libraries" )
+
+# Add include directories
+include_directories( 
+    ${WEBSOCKETPP_ROOT}
+    ${ASIO_INCLUDE_DIR}
+)
+
+# ASIO and WebSocketPP definitions
+add_definitions( 
+    -DASIO_STANDALONE                    # Use standalone ASIO (not Boost)
+    -D_WEBSOCKETPP_CPP11_STL_            # Use C++11 features
+    -D_WEBSOCKETPP_CPP11_FUNCTIONAL_    # Use std::function
+)
+
+# Windows-specific settings
+if( WIN32 )
+    add_definitions( 
+        -D_WIN32_WINNT=0x0601           # Windows 7 or later
+        -DWIN32_LEAN_AND_MEAN           # Exclude rarely-used Windows headers
+        -DNOMINMAX                      # Don't define min/max macros
+        -D_WEBSOCKETPP_MINGW_THREAD_    # Use MinGW threads if MinGW
+    )
+endif()
+
+# Disable SSL/TLS support in WebSocketPP (we don't need it for Archipelago)
+add_definitions( -D_WEBSOCKETPP_NO_TLS_ )
+
+# Set C++11 standard if not already set
+if(NOT CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
+
+
+
 # IMPORTANT: The include directory must be the parent of websocketpp folder
 # because WebSocketPP uses includes like <websocketpp/config/asio_client.hpp>
 set( WEBSOCKETPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../libraries" )
@@ -1229,7 +1264,7 @@ if( WIN32 )
 endif()
 
 
-# WebSocketPP configuration for Archipelago
+
 set( WEBSOCKETPP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libraries/websocketpp" )
 
 # Add WebSocketPP to include directories

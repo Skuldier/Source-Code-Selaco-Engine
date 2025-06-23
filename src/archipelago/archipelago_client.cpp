@@ -1,14 +1,14 @@
 // archipelago_client.cpp
-// WebSocket implementation for Archipelago using websocketpp
+// WebSocket implementation for Archipelago using websocketpp with ASIO
 
 #include "archipelago_client.h"
 #include "../common/engine/printf.h"
 
-// Define necessary preprocessor directives before including WebSocketPP
+// Define ASIO standalone before including WebSocketPP
 #define ASIO_STANDALONE
 #define _WEBSOCKETPP_CPP11_STL_
 
-// WebSocketPP includes - using standard include style
+// WebSocketPP includes
 #include <websocketpp/config/asio_no_tls_client.hpp>
 #include <websocketpp/client.hpp>
 
@@ -29,6 +29,7 @@
 // Type definitions for cleaner code
 typedef websocketpp::client<websocketpp::config::asio_client> ws_client;
 typedef websocketpp::config::asio_client::message_type::ptr message_ptr;
+typedef websocketpp::connection_hdl connection_hdl;
 
 namespace Archipelago {
 
@@ -70,49 +71,75 @@ public:
     
     // Constructor - sets up the WebSocket client
     Impl() {
-        // Initialize the ASIO io_service
-        m_client.init_asio();
-        
-        // Set logging to only show errors
-        m_client.set_error_channels(websocketpp::log::elevel::all);
-        m_client.set_access_channels(websocketpp::log::alevel::none);
-        
-        // Set up message handler
-        m_client.set_message_handler([this](websocketpp::connection_hdl hdl, message_ptr msg) {
-            HandleMessage(msg->get_payload());
-        });
-        
-        // Set up connection opened handler
-        m_client.set_open_handler([this](websocketpp::connection_hdl hdl) {
-            Printf("Archipelago: WebSocket connection opened\n");
-            m_connected = true;
-            m_connect_cv.notify_all();
-        });
-        
-        // Set up connection closed handler
-        m_client.set_close_handler([this](websocketpp::connection_hdl hdl) {
-            Printf("Archipelago: WebSocket connection closed\n");
-            m_connected = false;
-            auto con = m_client.get_con_from_hdl(hdl);
-            Printf("  Close code: %d, reason: %s\n", 
-                   con->get_remote_close_code(), 
-                   con->get_remote_close_reason().c_str());
-        });
-        
-        // Set up connection failed handler
-        m_client.set_fail_handler([this](websocketpp::connection_hdl hdl) {
-            Printf("Archipelago: WebSocket connection failed\n");
-            m_connected = false;
-            m_connect_cv.notify_all();
+        try {
+            // Clear access channels and set error channels
+            m_client.clear_access_channels(websocketpp::log::alevel::all);
+            m_client.set_error_channels(websocketpp::log::elevel::all);
             
-            auto con = m_client.get_con_from_hdl(hdl);
-            Printf("  Error: %s\n", con->get_ec().message().c_str());
-        });
+            // Initialize ASIO
+            m_client.init_asio();
+            
+            // Set up message handler
+            m_client.set_message_handler(std::bind(
+                &Impl::on_message, this,
+                std::placeholders::_1, std::placeholders::_2
+            ));
+            
+            // Set up open handler
+            m_client.set_open_handler(std::bind(
+                &Impl::on_open, this,
+                std::placeholders::_1
+            ));
+            
+            // Set up close handler
+            m_client.set_close_handler(std::bind(
+                &Impl::on_close, this,
+                std::placeholders::_1
+            ));
+            
+            // Set up fail handler
+            m_client.set_fail_handler(std::bind(
+                &Impl::on_fail, this,
+                std::placeholders::_1
+            ));
+            
+        } catch (const std::exception& e) {
+            Printf("Archipelago: Error initializing WebSocket client: %s\n", e.what());
+        }
     }
     
     // Destructor
     ~Impl() {
         Stop();
+    }
+    
+    // Connection handlers
+    void on_open(connection_hdl hdl) {
+        Printf("Archipelago: WebSocket connection opened\n");
+        m_connected = true;
+        m_connect_cv.notify_all();
+    }
+    
+    void on_close(connection_hdl hdl) {
+        Printf("Archipelago: WebSocket connection closed\n");
+        m_connected = false;
+        auto con = m_client.get_con_from_hdl(hdl);
+        Printf("  Close code: %d, reason: %s\n", 
+               con->get_remote_close_code(), 
+               con->get_remote_close_reason().c_str());
+    }
+    
+    void on_fail(connection_hdl hdl) {
+        Printf("Archipelago: WebSocket connection failed\n");
+        m_connected = false;
+        m_connect_cv.notify_all();
+        
+        auto con = m_client.get_con_from_hdl(hdl);
+        Printf("  Error: %s\n", con->get_ec().message().c_str());
+    }
+    
+    void on_message(connection_hdl hdl, message_ptr msg) {
+        HandleMessage(msg->get_payload());
     }
     
     // Start the ASIO processing thread
@@ -121,7 +148,11 @@ public:
             m_running = true;
             m_asio_thread = std::thread([this]() {
                 Printf("Archipelago: ASIO thread started\n");
-                m_client.run();
+                try {
+                    m_client.run();
+                } catch (const std::exception& e) {
+                    Printf("Archipelago: ASIO thread error: %s\n", e.what());
+                }
                 Printf("Archipelago: ASIO thread ended\n");
             });
         }

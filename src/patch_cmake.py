@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fix CMakeLists.txt for proper WebSocketPP include paths
+Fix CMakeLists.txt for proper ASIO and WebSocketPP configuration
 Run this from the src directory
 """
 
@@ -20,30 +20,15 @@ def fix_cmake():
         content = f.read()
     
     # Backup the original file
-    backup_file = cmake_file + ".backup_websocketpp"
+    backup_file = cmake_file + ".backup_asio"
     with open(backup_file, 'w') as f:
         f.write(content)
     print(f"Created backup: {backup_file}")
     
-    # Check if ARCHIPELAGO_SOURCES is defined
-    if "ARCHIPELAGO_SOURCES" not in content:
-        print("Error: ARCHIPELAGO_SOURCES not found in CMakeLists.txt")
-        print("Make sure archipelago sources are defined first")
-        sys.exit(1)
+    # Remove any existing WebSocketPP configuration
+    content = re.sub(r'# WebSocketPP configuration.*?(?=\n(?:set\(|if\(|#[^#]|$))', '', content, flags=re.DOTALL)
     
-    # Remove easywsclient files from ARCHIPELAGO_SOURCES if present
-    content = re.sub(r'archipelago/easywsclient\.cpp\s*', '', content)
-    content = re.sub(r'archipelago/easywsclient\.hpp\s*', '', content)
-    
-    # Check if WebSocketPP is already configured
-    if "WEBSOCKETPP configuration" in content:
-        print("Updating existing WebSocketPP configuration...")
-        # Remove old configuration
-        pattern = r'# WebSocketPP configuration.*?(?=\n(?:set\(|if\(|#|$))'
-        content = re.sub(pattern, '', content, flags=re.DOTALL)
-    
-    # Find where to insert WebSocketPP configuration
-    # Insert after ARCHIPELAGO_SOURCES block
+    # Find where to insert the configuration
     archipelago_pattern = r'(set\s*\(\s*ARCHIPELAGO_SOURCES[^)]+\))'
     match = re.search(archipelago_pattern, content, re.DOTALL)
     
@@ -53,49 +38,66 @@ def fix_cmake():
     
     insert_pos = match.end()
     
-    # WebSocketPP configuration with correct paths
-    websocketpp_config = """
+    # ASIO and WebSocketPP configuration
+    config = """
 
-# WebSocketPP configuration for Archipelago
-# IMPORTANT: The include directory must be the parent of websocketpp folder
-# because WebSocketPP uses includes like <websocketpp/config/asio_client.hpp>
+# ASIO and WebSocketPP configuration for Archipelago
+# ASIO is required by WebSocketPP for networking
+set( ASIO_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libraries/asio/asio/include" )
 set( WEBSOCKETPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../libraries" )
 
 # Add include directories
-include_directories( ${WEBSOCKETPP_ROOT} )
+include_directories( 
+    ${WEBSOCKETPP_ROOT}
+    ${ASIO_INCLUDE_DIR}
+)
 
-# WebSocketPP requires C++11 features
-add_definitions( -D_WEBSOCKETPP_CPP11_STL_ )
-
-# Disable threading for simpler implementation (can be enabled later if needed)
-add_definitions( -D_WEBSOCKETPP_NO_THREADING_ )
-
-# Use standalone ASIO (no Boost dependency)
-add_definitions( -DASIO_STANDALONE )
+# ASIO and WebSocketPP definitions
+add_definitions( 
+    -DASIO_STANDALONE                    # Use standalone ASIO (not Boost)
+    -D_WEBSOCKETPP_CPP11_STL_            # Use C++11 features
+    -D_WEBSOCKETPP_CPP11_FUNCTIONAL_    # Use std::function
+)
 
 # Windows-specific settings
 if( WIN32 )
-    add_definitions( -D_WIN32_WINNT=0x0601 )  # Windows 7 or later
-    add_definitions( -DWIN32_LEAN_AND_MEAN )
-    add_definitions( -DNOMINMAX )              # Prevent Windows.h from defining min/max macros
+    add_definitions( 
+        -D_WIN32_WINNT=0x0601           # Windows 7 or later
+        -DWIN32_LEAN_AND_MEAN           # Exclude rarely-used Windows headers
+        -DNOMINMAX                      # Don't define min/max macros
+        -D_WEBSOCKETPP_MINGW_THREAD_    # Use MinGW threads if MinGW
+    )
+endif()
+
+# Disable SSL/TLS support in WebSocketPP (we don't need it for Archipelago)
+add_definitions( -D_WEBSOCKETPP_NO_TLS_ )
+
+# Set C++11 standard if not already set
+if(NOT CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
 endif()
 """
     
     # Insert the configuration
-    new_content = content[:insert_pos] + websocketpp_config + content[insert_pos:]
+    new_content = content[:insert_pos] + config + content[insert_pos:]
     
     # Write the updated file
     with open(cmake_file, 'w') as f:
         f.write(new_content)
     
     print(f"Successfully updated {cmake_file}")
-    print("\nWebSocketPP include path set to: libraries/")
-    print("This allows includes like <websocketpp/config/asio_client.hpp> to work correctly")
+    print("\nConfiguration added:")
+    print("- ASIO include path: libraries/asio/asio/include")
+    print("- WebSocketPP include path: libraries/")
+    print("- Using standalone ASIO (no Boost dependency)")
+    print("- C++11 features enabled")
     print("\nNext steps:")
-    print("1. Delete your build directory: rm -rf ../build")
-    print("2. Create a new build directory: mkdir ../build && cd ../build")
-    print("3. Run CMake: cmake ..")
-    print("4. Build the project: make (or use Visual Studio)")
+    print("1. Run the download_asio.py script to install ASIO")
+    print("2. Delete your build directory: rm -rf ../build")
+    print("3. Create a new build directory: mkdir ../build && cd ../build")
+    print("4. Run CMake: cmake ..")
+    print("5. Build the project")
 
 if __name__ == "__main__":
     fix_cmake()
