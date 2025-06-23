@@ -1,13 +1,16 @@
-// archipelago_websocketpp_client.cpp
-// A robust WebSocket implementation for Archipelago using websocketpp
-// This replaces the unreliable easywsclient implementation
+// archipelago_client.cpp
+// WebSocket implementation for Archipelago using websocketpp
 
 #include "archipelago_client.h"
 #include "../common/engine/printf.h"
 
-// WebSocketPP includes - Note: paths need to be relative to project root
-#include "../../libraries/websocketpp/config/asio_no_tls_client.hpp"
-#include "../../libraries/websocketpp/client.hpp"
+// Define necessary preprocessor directives before including WebSocketPP
+#define ASIO_STANDALONE
+#define _WEBSOCKETPP_CPP11_STL_
+
+// WebSocketPP includes - using standard include style
+#include <websocketpp/config/asio_no_tls_client.hpp>
+#include <websocketpp/client.hpp>
 
 // JSON handling
 #include "rapidjson/document.h"
@@ -21,11 +24,7 @@
 #include <thread>
 #include <atomic>
 #include <condition_variable>
-
-// WebSocketPP namespace imports - MUST come after includes
-using websocketpp::lib::error_code;
-using websocketpp::lib::placeholders::_1;
-using websocketpp::lib::placeholders::_2;
+#include <queue>
 
 // Type definitions for cleaner code
 typedef websocketpp::client<websocketpp::config::asio_client> ws_client;
@@ -54,7 +53,6 @@ void AP_Shutdown() {
 }
 
 // Private implementation class to hide WebSocket details
-// This pattern keeps the WebSocket implementation details out of the header file
 class ArchipelagoClient::Impl {
 public:
     ws_client m_client;
@@ -72,21 +70,19 @@ public:
     
     // Constructor - sets up the WebSocket client
     Impl() {
-        // Initialize the ASIO io_service (WebSocketPP uses ASIO for networking)
+        // Initialize the ASIO io_service
         m_client.init_asio();
         
-        // Set logging to only show errors (reduce console spam)
+        // Set logging to only show errors
         m_client.set_error_channels(websocketpp::log::elevel::all);
         m_client.set_access_channels(websocketpp::log::alevel::none);
         
         // Set up message handler
-        // This lambda function will be called whenever we receive a message
         m_client.set_message_handler([this](websocketpp::connection_hdl hdl, message_ptr msg) {
             HandleMessage(msg->get_payload());
         });
         
         // Set up connection opened handler
-        // This is called when the WebSocket connection is established
         m_client.set_open_handler([this](websocketpp::connection_hdl hdl) {
             Printf("Archipelago: WebSocket connection opened\n");
             m_connected = true;
@@ -94,7 +90,6 @@ public:
         });
         
         // Set up connection closed handler
-        // This is called when the connection is closed (by either side)
         m_client.set_close_handler([this](websocketpp::connection_hdl hdl) {
             Printf("Archipelago: WebSocket connection closed\n");
             m_connected = false;
@@ -105,19 +100,17 @@ public:
         });
         
         // Set up connection failed handler
-        // This is called if the connection attempt fails
         m_client.set_fail_handler([this](websocketpp::connection_hdl hdl) {
             Printf("Archipelago: WebSocket connection failed\n");
             m_connected = false;
             m_connect_cv.notify_all();
             
-            // Get detailed error information
             auto con = m_client.get_con_from_hdl(hdl);
             Printf("  Error: %s\n", con->get_ec().message().c_str());
         });
     }
     
-    // Destructor - clean up the ASIO thread
+    // Destructor
     ~Impl() {
         Stop();
     }
@@ -145,7 +138,7 @@ public:
         }
     }
     
-    // Process incoming messages (called from WebSocket thread)
+    // Process incoming messages
     void HandleMessage(const std::string& message);
     
     // Send a message (thread-safe)
@@ -161,8 +154,6 @@ public:
         
         if (ec) {
             Printf("Archipelago: Send failed: %s\n", ec.message().c_str());
-        } else {
-            Printf("Archipelago: Message sent successfully\n");
         }
     }
 };
@@ -217,27 +208,23 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
             return false;
         }
         
-        // Queue the connection (this initiates the actual connection attempt)
+        // Queue the connection
         m_impl->m_client.connect(m_impl->m_connection);
         
-        // Wait for the connection to be established (with timeout)
-        // This prevents the function from returning before we know if the connection succeeded
+        // Wait for the connection to be established
         std::unique_lock<std::mutex> lock(m_impl->m_connect_mutex);
         if (m_impl->m_connect_cv.wait_for(lock, std::chrono::seconds(5), 
             [this]{ return m_impl->m_connected.load(); })) {
             
-            // Connection successful
             Printf("Archipelago: Connection established successfully\n");
             m_status = ConnectionStatus::Connected;
             
-            // Send the initial Connect packet immediately
-            // This is crucial - the server expects this within milliseconds
+            // Send the initial Connect packet
             SendConnectPacket();
             
             return true;
         } else {
-            // Connection timed out or failed
-            Printf("Archipelago: Connection attempt timed out or failed\n");
+            Printf("Archipelago: Connection attempt timed out\n");
             m_status = ConnectionStatus::Error;
             return false;
         }
@@ -249,29 +236,19 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
     }
 }
 
-// Send the initial Connect packet required by Archipelago protocol
+// Send the initial Connect packet
 void ArchipelagoClient::SendConnectPacket() {
     Printf("Archipelago: Sending initial Connect packet\n");
     
-    // Create the Connect packet with all required fields
     rapidjson::Document packet;
     packet.SetObject();
     auto& allocator = packet.GetAllocator();
     
-    // Command type - this must be "Connect" for the initial handshake
     packet.AddMember("cmd", "Connect", allocator);
-    
-    // Game name - identifies what game this client is for
     packet.AddMember("game", "Selaco", allocator);
-    
-    // Player name - will be updated when we authenticate to a specific slot
     packet.AddMember("name", "SelacoPlayer", allocator);
-    
-    // UUID - unique identifier for this client instance
-    // In production, you'd want to generate and persist a real UUID
     packet.AddMember("uuid", "selaco-client-001", allocator);
     
-    // Protocol version - must match what the server expects
     rapidjson::Value version(rapidjson::kObjectType);
     version.AddMember("class", "Version", allocator);
     version.AddMember("major", 0, allocator);
@@ -279,25 +256,17 @@ void ArchipelagoClient::SendConnectPacket() {
     version.AddMember("build", 0, allocator);
     packet.AddMember("version", version, allocator);
     
-    // Items handling flags (binary flags for item handling features)
-    // 7 = 0b111 = all features enabled
     packet.AddMember("items_handling", 7, allocator);
     
-    // Client tags - capabilities this client supports
     rapidjson::Value tags(rapidjson::kArrayType);
     tags.PushBack("AP", allocator);
-    // Add other tags as needed, e.g., "DeathLink" if implemented
     packet.AddMember("tags", tags, allocator);
     
-    // Convert to JSON string
     rapidjson::StringBuffer buffer;
     rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
     packet.Accept(writer);
     
-    // Send the packet
-    std::string message = buffer.GetString();
-    Printf("Archipelago: Connect packet JSON: %s\n", message.c_str());
-    SendPacket(message);
+    SendPacket(buffer.GetString());
 }
 
 // Disconnect from the server
@@ -305,7 +274,6 @@ void ArchipelagoClient::Disconnect() {
     Printf("Archipelago: Disconnect() called\n");
     
     if (m_impl->m_connection && m_impl->m_connected) {
-        // Close the WebSocket connection gracefully
         websocketpp::lib::error_code ec;
         m_impl->m_client.close(m_impl->m_connection, 
                                websocketpp::close::status::going_away, 
@@ -315,11 +283,9 @@ void ArchipelagoClient::Disconnect() {
             Printf("Archipelago: Error during disconnect: %s\n", ec.message().c_str());
         }
         
-        // Wait a moment for the close to process
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     
-    // Stop the ASIO thread
     m_impl->Stop();
     
     m_status = ConnectionStatus::Disconnected;
@@ -332,11 +298,8 @@ bool ArchipelagoClient::IsConnected() const {
     return m_impl->m_connected && m_status == ConnectionStatus::Connected;
 }
 
-// Process any pending messages (called from game thread)
+// Process any pending messages
 void ArchipelagoClient::ProcessMessages() {
-    // With websocketpp, messages are handled asynchronously in the ASIO thread
-    // This function now mainly processes our outgoing queue
-    
     std::lock_guard<std::mutex> lock(m_queueMutex);
     while (!m_outgoingQueue.empty()) {
         m_impl->SendMessage(m_outgoingQueue.front());
@@ -346,11 +309,10 @@ void ArchipelagoClient::ProcessMessages() {
 
 // Queue a packet for sending
 void ArchipelagoClient::SendPacket(const std::string& json) {
-    // For thread safety, we queue messages and send them from ProcessMessages
     std::lock_guard<std::mutex> lock(m_queueMutex);
     m_outgoingQueue.push(json);
     
-    // However, for the initial connection, we need to send immediately
+    // For initial connection, send immediately
     if (m_outgoingQueue.size() == 1 && m_impl->m_connected) {
         m_impl->SendMessage(json);
         m_outgoingQueue.pop();
@@ -368,29 +330,24 @@ void ArchipelagoClient::Authenticate(const std::string& slot, const std::string&
     
     m_slot = slot;
     
-    // Create the ConnectSlot packet
     rapidjson::Document packet;
     packet.SetObject();
     auto& allocator = packet.GetAllocator();
     
     packet.AddMember("cmd", "ConnectSlot", allocator);
     
-    // Slot name
     rapidjson::Value slotValue;
     slotValue.SetString(slot.c_str(), allocator);
     packet.AddMember("name", slotValue, allocator);
     
-    // Password (if required)
     if (!password.empty()) {
         rapidjson::Value passValue;
         passValue.SetString(password.c_str(), allocator);
         packet.AddMember("password", passValue, allocator);
     }
     
-    // Client version
     packet.AddMember("clientVer", version, allocator);
     
-    // Convert and send
     rapidjson::StringBuffer buffer;
     rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
     packet.Accept(writer);
@@ -398,7 +355,7 @@ void ArchipelagoClient::Authenticate(const std::string& slot, const std::string&
     SendPacket(buffer.GetString());
 }
 
-// Send location check(s)
+// Send location checks
 void ArchipelagoClient::SendLocationCheck(int locationId) {
     std::vector<int> locations = { locationId };
     SendLocationChecks(locations);
@@ -457,7 +414,7 @@ void ArchipelagoClient::StatusUpdate(const std::string& status) {
     SendPacket(buffer.GetString());
 }
 
-// Send a ping packet for testing
+// Send a ping packet
 void ArchipelagoClient::SendPing() {
     rapidjson::Document doc;
     doc.SetArray();
@@ -481,7 +438,7 @@ void ArchipelagoClient::SendPing() {
     Printf("Archipelago: Ping sent\n");
 }
 
-// Handle incoming message (called from WebSocket thread)
+// Handle incoming message
 void ArchipelagoClient::HandleMessage(const std::string& message) {
     Printf("Archipelago: Received message: %s\n", message.c_str());
     
@@ -494,8 +451,6 @@ void ArchipelagoClient::HandleMessage(const std::string& message) {
 
 // Implementation of Impl::HandleMessage
 void ArchipelagoClient::Impl::HandleMessage(const std::string& message) {
-    // Forward to the parent class
-    // This is called from the WebSocket thread, so be careful with thread safety
     if (g_archipelago) {
         g_archipelago->HandleMessage(message);
     }
@@ -520,10 +475,8 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
         
         std::string cmd = packet["cmd"].GetString();
         
-        // Handle different packet types
         if (cmd == "RoomInfo") {
             Printf("Archipelago: Received RoomInfo - handshake accepted!\n");
-            // This is the first packet you receive after a successful Connect
             
         } else if (cmd == "Connected") {
             Printf("Archipelago: Authentication successful!\n");

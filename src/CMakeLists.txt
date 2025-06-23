@@ -1205,6 +1205,31 @@ set( ARCHIPELAGO_SOURCES
 	archipelago/archipelago_client.h)
 
 # WebSocketPP configuration for Archipelago
+# IMPORTANT: The include directory must be the parent of websocketpp folder
+# because WebSocketPP uses includes like <websocketpp/config/asio_client.hpp>
+set( WEBSOCKETPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../libraries" )
+
+# Add include directories
+include_directories( ${WEBSOCKETPP_ROOT} )
+
+# WebSocketPP requires C++11 features
+add_definitions( -D_WEBSOCKETPP_CPP11_STL_ )
+
+# Disable threading for simpler implementation (can be enabled later if needed)
+add_definitions( -D_WEBSOCKETPP_NO_THREADING_ )
+
+# Use standalone ASIO (no Boost dependency)
+add_definitions( -DASIO_STANDALONE )
+
+# Windows-specific settings
+if( WIN32 )
+    add_definitions( -D_WIN32_WINNT=0x0601 )  # Windows 7 or later
+    add_definitions( -DWIN32_LEAN_AND_MEAN )
+    add_definitions( -DNOMINMAX )              # Prevent Windows.h from defining min/max macros
+endif()
+
+
+# WebSocketPP configuration for Archipelago
 set( WEBSOCKETPP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libraries/websocketpp" )
 
 # Add WebSocketPP to include directories
@@ -1216,7 +1241,7 @@ add_definitions( -DASIO_STANDALONE )
 add_definitions( -D_WEBSOCKETPP_CPP11_STL_ )
 
 # Remove easywsclient from the build
-list(REMOVE_ITEM ARCHIPELAGO_SOURCES archipelago/easywsclient.cpp archipelago/easywsclient.hpp)
+list(REMOVE_ITEM ARCHIPELAGO_SOURCES )
 
 
 if( ${HAVE_VM_JIT} )

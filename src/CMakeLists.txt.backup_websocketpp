@@ -1204,6 +1204,21 @@ set( ARCHIPELAGO_SOURCES
 	archipelago/archipelago_ccmds.cpp 
 	archipelago/archipelago_client.h)
 
+# WebSocketPP configuration for Archipelago
+set( WEBSOCKETPP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libraries/websocketpp" )
+
+# Add WebSocketPP to include directories
+include_directories( ${WEBSOCKETPP_INCLUDE_DIR} )
+
+# WebSocketPP requires Boost ASIO or standalone ASIO
+# For now, we'll use the standalone ASIO that comes with WebSocketPP
+add_definitions( -DASIO_STANDALONE )
+add_definitions( -D_WEBSOCKETPP_CPP11_STL_ )
+
+# Remove easywsclient from the build
+list(REMOVE_ITEM ARCHIPELAGO_SOURCES archipelago/easywsclient.cpp archipelago/easywsclient.hpp)
+
+
 if( ${HAVE_VM_JIT} )
 	set( PCH_SOURCES ${PCH_SOURCES} ${VM_JIT_SOURCES} )
 else()
