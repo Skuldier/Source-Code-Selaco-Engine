@@ -1183,12 +1183,25 @@ set (PCH_SOURCES
 	utility/nodebuilder/nodebuild_utility.cpp
 )
 
+
+# WebSocketPP configuration
+find_package(Threads REQUIRED)
+find_package(Boost COMPONENTS system QUIET)
+
+if(NOT Boost_FOUND)
+    message(STATUS "Boost not found, using standalone ASIO")
+    add_definitions(-DASIO_STANDALONE)
+endif()
+
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/libraries/websocketpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include
+)
+
 # Archipelago integration
 set( ARCHIPELAGO_SOURCES
 	archipelago/archipelago_client.cpp
-	archipelago/easywsclient.cpp
 	archipelago/archipelago_ccmds.cpp 
-	archipelago/easywsclient.hpp
 	archipelago/archipelago_client.h)
 
 if( ${HAVE_VM_JIT} )
