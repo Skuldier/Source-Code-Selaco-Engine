@@ -1,5 +1,5 @@
 #include "archipelago_client.h"
-#include "common/engine/printf.h"
+#include "../common/engine/printf.h"
 #include "easywsclient.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"

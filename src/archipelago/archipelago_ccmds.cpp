@@ -1,7 +1,7 @@
 // Console commands for Archipelago integration
 
 #include "c_dispatch.h"
-#include "common/engine/printf.h"
+#include "../common/engine/printf.h"
 #include "archipelago_client.h"
 #include <sstream>
 
