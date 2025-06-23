@@ -5,15 +5,11 @@
 #include <memory>
 #include <queue>
 #include <mutex>
-
-// Forward declarations
-namespace easywsclient {
-    class WebSocket;
-}
+#include <vector>
 
 namespace Archipelago {
 
-// Basic packet types
+// Basic packet types that Archipelago uses
 enum class PacketType {
     RoomInfo,
     ConnectionRefused,
@@ -40,7 +36,7 @@ enum class PacketType {
     SetNotify
 };
 
-// Connection status
+// Connection status states
 enum class ConnectionStatus {
     Disconnected,
     Connecting,
@@ -49,13 +45,14 @@ enum class ConnectionStatus {
     Error
 };
 
-// Simple packet structure
+// Simple packet structure for future use
 struct Packet {
     PacketType type;
     std::string json;
 };
 
 // Main Archipelago client class
+// This class handles all communication with an Archipelago server
 class ArchipelagoClient {
 public:
     ArchipelagoClient();
@@ -79,7 +76,7 @@ public:
     void SendPacket(const std::string& json);
     void ProcessMessages();
     
-    // Callbacks
+    // Callbacks for game integration
     using MessageCallback = std::function<void(const std::string&)>;
     void SetMessageCallback(MessageCallback callback) { m_messageCallback = callback; }
     
@@ -90,11 +87,17 @@ public:
     void SendPing();
 
 private:
-    void HandleMessage(const std::string& message);
-    void SendConnectPacket();
-    void ParsePacket(const std::string& json);
+    // Private implementation class
+    // This hides all the WebSocket details from the header
+    class Impl;
+    std::unique_ptr<Impl> m_impl;
     
-    std::unique_ptr<easywsclient::WebSocket> m_websocket;
+    // Internal methods
+    void HandleMessage(const std::string& message);
+    void ParsePacket(const std::string& json);
+    void SendConnectPacket();
+    
+    // Connection state
     ConnectionStatus m_status;
     
     // Connection info
