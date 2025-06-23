@@ -124,7 +124,6 @@
 #include "statdb.h"
 
 
-#include "archipelago/archipelago_client.h"
 #ifdef __unix__
 #include "i_system.h"  // for SHARE_DIR
 #endif // __unix__
@@ -4068,7 +4067,9 @@ int GameMain()
 	}
 	
 	Archipelago::AP_Shutdown();
-	
+	}
+	// Unless something really bad happened, the game should only exit through this single point in the code.
+	// No more 'exit', please.
 	D_Cleanup();
 	CloseNetwork();
 	GC::FinalGC = true;

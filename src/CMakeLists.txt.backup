@@ -1187,9 +1187,7 @@ set (PCH_SOURCES
 set( ARCHIPELAGO_SOURCES
 	archipelago/archipelago_client.cpp
 	archipelago/easywsclient.cpp
-	archipelago/archipelago_ccmds.cpp 
-	archipelago/easywsclient.hpp
-	archipelago/archipelago_client.h)
+	archipelago/archipelago_ccmds.cpp )
 
 if( ${HAVE_VM_JIT} )
 	set( PCH_SOURCES ${PCH_SOURCES} ${VM_JIT_SOURCES} )
@@ -1252,12 +1250,10 @@ set( GAME_SOURCES
 
 )
 
-set( GAME_NONPCH_SOURCES ${GAME_SOURCES}
-	${ARCHIPELAGO_SOURCES} )
+set( GAME_NONPCH_SOURCES ${GAME_SOURCES} )
 list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 
-add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES}
-	${ARCHIPELAGO_SOURCES} )
+add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
 
 target_precompile_headers( zdoom PRIVATE g_pch.h )
 

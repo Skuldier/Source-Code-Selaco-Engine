@@ -1893,9 +1893,6 @@ void TryRunTics (void)
 
 	// get available tics
 	NetUpdate ();
-		// Process Archipelago messages
-		Net_ProcessArchipelago();
-
 
 	if (pauseext)
 		return;
