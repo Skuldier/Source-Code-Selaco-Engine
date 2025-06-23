@@ -1,4 +1,41 @@
-#include "archipelago_client.h"
+#!/usr/bin/env python3
+"""
+Fix the structural issues in archipelago_client.cpp
+Moves SendConnectPacket to the correct location and fixes the Connect function
+"""
+
+import sys
+import os
+import shutil
+from datetime import datetime
+
+def create_backup(filepath):
+    """Create a timestamped backup of the original file"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = f"{filepath}.backup_{timestamp}"
+    shutil.copy2(filepath, backup_path)
+    print(f"✓ Created backup: {backup_path}")
+    return backup_path
+
+def fix_archipelago_structure(filepath):
+    """Fix the misplaced SendConnectPacket function and correct the Connect function"""
+    
+    if not os.path.exists(filepath):
+        print(f"Error: File {filepath} not found!")
+        return False
+    
+    print(f"Fixing structural issues in: {filepath}")
+    
+    # Read the file
+    with open(filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # The correct structure for the file
+    # We need to extract the SendConnectPacket function and move it to the right place
+    # Then fix the Connect function
+    
+    # First, let's build the corrected content piece by piece
+    corrected_content = '''#include "archipelago_client.h"
 #include "../common/engine/printf.h"
 #include "easywsclient.hpp"
 #include "rapidjson/document.h"
@@ -17,7 +54,7 @@ ArchipelagoClient* g_archipelago = nullptr;
 void AP_Init() {
     if (!g_archipelago) {
         g_archipelago = new ArchipelagoClient();
-        Printf("Archipelago: Client initialized\n");
+        Printf("Archipelago: Client initialized\\n");
     }
 }
 
@@ -25,7 +62,7 @@ void AP_Shutdown() {
     if (g_archipelago) {
         delete g_archipelago;
         g_archipelago = nullptr;
-        Printf("Archipelago: Client shutdown\n");
+        Printf("Archipelago: Client shutdown\\n");
     }
 }
 
@@ -43,7 +80,7 @@ ArchipelagoClient::~ArchipelagoClient() {
 
 bool ArchipelagoClient::Connect(const std::string& host, int port) {
     if (m_websocket && m_status != ConnectionStatus::Disconnected) {
-        Printf("Archipelago: Already connected\n");
+        Printf("Archipelago: Already connected\\n");
         return false;
     }
 
@@ -54,7 +91,7 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
     std::stringstream url;
     url << "ws://" << host << ":" << port;
     
-    Printf("Archipelago: Connecting to %s...\n", url.str().c_str());
+    Printf("Archipelago: Connecting to %s...\\n", url.str().c_str());
     
     m_status = ConnectionStatus::Connecting;
     
@@ -62,13 +99,13 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
     m_websocket.reset(easywsclient::WebSocket::from_url(url.str()));
     
     if (!m_websocket) {
-        Printf("Archipelago: Failed to connect to %s\n", url.str().c_str());
+        Printf("Archipelago: Failed to connect to %s\\n", url.str().c_str());
         m_status = ConnectionStatus::Error;
         return false;
     }
     
     m_status = ConnectionStatus::Connected;
-    Printf("Archipelago: Connected successfully!\n");
+    Printf("Archipelago: Connected successfully!\\n");
     
     // Send the initial handshake packet immediately
     // This is REQUIRED by the Archipelago protocol
@@ -120,7 +157,7 @@ void ArchipelagoClient::SendConnectPacket() {
     packet.Accept(writer);
     
     std::string message = buffer.GetString();
-    Printf("Archipelago: Sending Connect packet\n");
+    Printf("Archipelago: Sending Connect packet\\n");
     SendPacket(message);
 }
 
@@ -131,7 +168,7 @@ void ArchipelagoClient::Disconnect() {
     }
     m_status = ConnectionStatus::Disconnected;
     m_checkedLocations.clear();
-    Printf("Archipelago: Disconnected\n");
+    Printf("Archipelago: Disconnected\\n");
 }
 
 bool ArchipelagoClient::IsConnected() const {
@@ -164,7 +201,7 @@ void ArchipelagoClient::SendPacket(const std::string& json) {
 
 void ArchipelagoClient::Authenticate(const std::string& slot, const std::string& password, int version) {
     if (m_status != ConnectionStatus::Connected) {
-        Printf("Archipelago: Not connected!\n");
+        Printf("Archipelago: Not connected!\\n");
         return;
     }
     
@@ -197,7 +234,7 @@ void ArchipelagoClient::Authenticate(const std::string& slot, const std::string&
     rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
     packet.Accept(writer);
     
-    Printf("Archipelago: Authenticating as '%s'...\n", slot.c_str());
+    Printf("Archipelago: Authenticating as '%s'...\\n", slot.c_str());
     SendPacket(buffer.GetString());
 }
 
@@ -277,7 +314,7 @@ void ArchipelagoClient::SendPing() {
     doc.Accept(writer);
     
     SendPacket(buffer.GetString());
-    Printf("Archipelago: Ping sent\n");
+    Printf("Archipelago: Ping sent\\n");
 }
 
 void ArchipelagoClient::HandleMessage(const std::string& message) {
@@ -293,7 +330,7 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
     doc.Parse(json.c_str());
     
     if (doc.HasParseError() || !doc.IsArray() || doc.Empty()) {
-        Printf("Archipelago: Invalid packet received\n");
+        Printf("Archipelago: Invalid packet received\\n");
         return;
     }
     
@@ -307,11 +344,11 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
         std::string cmd = packet["cmd"].GetString();
         
         if (cmd == "RoomInfo") {
-            Printf("Archipelago: Received RoomInfo\n");
+            Printf("Archipelago: Received RoomInfo\\n");
             // Room info contains version info, tags, password required, etc.
             
         } else if (cmd == "Connected") {
-            Printf("Archipelago: Authentication successful!\n");
+            Printf("Archipelago: Authentication successful!\\n");
             m_status = ConnectionStatus::InGame;
             
             if (packet.HasMember("slot")) {
@@ -325,12 +362,12 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
             if (packet.HasMember("missing_locations")) {
                 const auto& missing = packet["missing_locations"];
                 if (missing.IsArray()) {
-                    Printf("Archipelago: %d unchecked locations\n", missing.Size());
+                    Printf("Archipelago: %d unchecked locations\\n", missing.Size());
                 }
             }
             
         } else if (cmd == "ConnectionRefused") {
-            Printf("Archipelago: Connection refused!\n");
+            Printf("Archipelago: Connection refused!\\n");
             m_status = ConnectionStatus::Error;
             
             if (packet.HasMember("errors")) {
@@ -338,7 +375,7 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
                 if (errors.IsArray()) {
                     for (rapidjson::SizeType j = 0; j < errors.Size(); j++) {
                         if (errors[j].IsString()) {
-                            Printf("  Error: %s\n", errors[j].GetString());
+                            Printf("  Error: %s\\n", errors[j].GetString());
                         }
                     }
                 }
@@ -357,7 +394,7 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
                 int locationId = item["location"].GetInt();
                 int playerSlot = item["player"].GetInt();
                 
-                Printf("Archipelago: Received item %d from location %d (player %d)\n", 
+                Printf("Archipelago: Received item %d from location %d (player %d)\\n", 
                        itemId, locationId, playerSlot);
                 
                 if (m_itemReceivedCallback) {
@@ -371,16 +408,112 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
             
         } else if (cmd == "PrintJSON") {
             if (packet.HasMember("text")) {
-                Printf("Archipelago: %s\n", packet["text"].GetString());
+                Printf("Archipelago: %s\\n", packet["text"].GetString());
             }
             
         } else if (cmd == "Bounced") {
-            Printf("Archipelago: Pong received\n");
+            Printf("Archipelago: Pong received\\n");
             
         } else {
-            Printf("Archipelago: Received packet type: %s\n", cmd.c_str());
+            Printf("Archipelago: Received packet type: %s\\n", cmd.c_str());
         }
     }
 }
 
-} // namespace Archipelago
+} // namespace Archipelago'''
+    
+    # Create backup
+    backup_path = create_backup(filepath)
+    
+    # Write the corrected content
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(corrected_content)
+    
+    print("✓ Fixed structural issues in archipelago_client.cpp")
+    print("\nChanges made:")
+    print("1. Moved SendConnectPacket() to its proper location after Connect()")
+    print("2. Fixed Connect() function to properly complete and call SendConnectPacket()")
+    print("3. Ensured proper function boundaries and flow")
+    
+    # Now update the header file to add the declaration
+    header_path = filepath.replace('.cpp', '.h')
+    if os.path.exists(header_path):
+        print(f"\nUpdating header file: {header_path}")
+        
+        with open(header_path, 'r', encoding='utf-8') as f:
+            header_content = f.read()
+        
+        # Check if SendConnectPacket is already declared
+        if 'SendConnectPacket' not in header_content:
+            # Find the private section
+            private_pos = header_content.find('private:')
+            if private_pos != -1:
+                # Find the next good insertion point after private:
+                insert_pos = header_content.find('\n', private_pos) + 1
+                # Skip any existing member declarations to find a good spot
+                lines_after_private = header_content[insert_pos:].split('\n')
+                
+                # Insert after the first line of member variables/functions
+                for i, line in enumerate(lines_after_private):
+                    if line.strip() and not line.strip().startswith('//'):
+                        actual_pos = insert_pos + sum(len(l) + 1 for l in lines_after_private[:i+1])
+                        break
+                else:
+                    actual_pos = insert_pos
+                
+                # Insert the declaration
+                new_header = (header_content[:actual_pos] + 
+                             "    void SendConnectPacket();\n" + 
+                             header_content[actual_pos:])
+                
+                # Create backup of header
+                create_backup(header_path)
+                
+                with open(header_path, 'w', encoding='utf-8') as f:
+                    f.write(new_header)
+                
+                print("✓ Added SendConnectPacket() declaration to header file")
+        else:
+            print("✓ SendConnectPacket() already declared in header")
+    
+    print("\nThe Archipelago client structure has been fixed!")
+    print("\nWhat was wrong:")
+    print("- SendConnectPacket() function was defined inside Connect() function")
+    print("- This broke the syntax and prevented the handshake from being called")
+    print("\nWhat's fixed now:")
+    print("- Connect() properly establishes the WebSocket connection")
+    print("- Connect() calls SendConnectPacket() at the end")
+    print("- SendConnectPacket() sends the required protocol handshake")
+    print("\nNext steps:")
+    print("1. Rebuild your project")
+    print("2. Test connection with 'ap_connect localhost' or 'ap_connect archipelago.gg 61366'")
+    print("3. The connection should now stay open!")
+    
+    return True
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python fix_archipelago_structure.py <path_to_archipelago_client.cpp>")
+        print("Example: python fix_archipelago_structure.py C:\\path\\to\\archipelago_client.cpp")
+        sys.exit(1)
+    
+    filepath = sys.argv[1]
+    
+    print(f"This script will fix the structural issues in:")
+    print(f"  {filepath}")
+    print("\nThis will:")
+    print("  - Fix the misplaced SendConnectPacket function")
+    print("  - Ensure Connect() properly calls the handshake")
+    print("  - Update the header file with proper declaration")
+    print("\nA backup will be created before any changes are made.")
+    response = input("\nProceed? (y/n): ")
+    
+    if response.lower() != 'y':
+        print("Operation cancelled.")
+        sys.exit(0)
+    
+    success = fix_archipelago_structure(filepath)
+    sys.exit(0 if success else 1)
+
+if __name__ == "__main__":
+    main()

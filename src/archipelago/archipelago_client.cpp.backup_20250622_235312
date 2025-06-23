@@ -70,58 +70,7 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
     m_status = ConnectionStatus::Connected;
     Printf("Archipelago: Connected successfully!\n");
     
-    // Send the initial handshake packet immediately
-    // This is REQUIRED by the Archipelago protocol
-    SendConnectPacket();
-    
     return true;
-}
-
-void ArchipelagoClient::SendConnectPacket() {
-    // Create the Connect packet as required by Archipelago protocol
-    rapidjson::Document packet;
-    packet.SetObject();
-    auto& allocator = packet.GetAllocator();
-    
-    // Required fields for Connect packet
-    packet.AddMember("cmd", "Connect", allocator);
-    
-    // Game identification - this tells the server we're a Selaco client
-    packet.AddMember("game", "Selaco", allocator);
-    
-    // Player name - for now just use a default, will be updated with auth
-    packet.AddMember("name", "SelacoPlayer", allocator);
-    
-    // Unique identifier for this client instance
-    // In a full implementation, you'd generate and store a proper UUID
-    packet.AddMember("uuid", "selaco-client-001", allocator);
-    
-    // Protocol version - Archipelago protocol version we support
-    rapidjson::Value version(rapidjson::kObjectType);
-    version.AddMember("class", "Version", allocator);
-    version.AddMember("major", 0, allocator);
-    version.AddMember("minor", 4, allocator);
-    version.AddMember("build", 0, allocator);
-    packet.AddMember("version", version, allocator);
-    
-    // Items handling flags - tells server how we want to receive items
-    // 0b111 = 7 means we want all item handling features
-    packet.AddMember("items_handling", 7, allocator);
-    
-    // Tags to identify our client capabilities
-    rapidjson::Value tags(rapidjson::kArrayType);
-    tags.PushBack("AP", allocator);
-    tags.PushBack("DeathLink", allocator);  // If Selaco supports DeathLink
-    packet.AddMember("tags", tags, allocator);
-    
-    // Convert to string and send
-    rapidjson::StringBuffer buffer;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-    packet.Accept(writer);
-    
-    std::string message = buffer.GetString();
-    Printf("Archipelago: Sending Connect packet\n");
-    SendPacket(message);
 }
 
 void ArchipelagoClient::Disconnect() {
@@ -163,42 +112,37 @@ void ArchipelagoClient::SendPacket(const std::string& json) {
 }
 
 void ArchipelagoClient::Authenticate(const std::string& slot, const std::string& password, int version) {
-    if (m_status != ConnectionStatus::Connected) {
-        Printf("Archipelago: Not connected!\n");
-        return;
-    }
-    
     m_slot = slot;
     
-    // Create ConnectSlot packet for authentication
+    rapidjson::Document doc;
+    doc.SetArray();
+    
     rapidjson::Document packet;
     packet.SetObject();
     auto& allocator = packet.GetAllocator();
     
-    packet.AddMember("cmd", "ConnectSlot", allocator);
+    packet.AddMember("cmd", "Connect", allocator);
+    packet.AddMember("game", "Selaco", allocator);
+    packet.AddMember("name", rapidjson::Value(slot.c_str(), allocator), allocator);
+    packet.AddMember("uuid", "", allocator);
+    packet.AddMember("version", rapidjson::Value().SetObject(), allocator);
+    packet["version"].AddMember("major", 0, allocator);
+    packet["version"].AddMember("minor", 4, allocator);
+    packet["version"].AddMember("build", 0, allocator);
+    packet["version"].AddMember("class", "Version", allocator);
     
-    // Slot name to connect to
-    rapidjson::Value slotValue;
-    slotValue.SetString(slot.c_str(), allocator);
-    packet.AddMember("name", slotValue, allocator);
+    packet.AddMember("items_handling", 0b111, allocator); // All items
+    packet.AddMember("tags", rapidjson::Value().SetArray(), allocator);
+    packet.AddMember("password", rapidjson::Value(password.c_str(), allocator), allocator);
     
-    // Password if required
-    if (!password.empty()) {
-        rapidjson::Value passValue;
-        passValue.SetString(password.c_str(), allocator);
-        packet.AddMember("password", passValue, allocator);
-    }
+    doc.PushBack(packet, allocator);
     
-    // Game version
-    packet.AddMember("clientVer", version, allocator);
-    
-    // Convert and send
     rapidjson::StringBuffer buffer;
     rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-    packet.Accept(writer);
+    doc.Accept(writer);
     
-    Printf("Archipelago: Authenticating as '%s'...\n", slot.c_str());
     SendPacket(buffer.GetString());
+    Printf("Archipelago: Authenticating as '%s'...\n", slot.c_str());
 }
 
 void ArchipelagoClient::SendLocationCheck(int locationId) {

@@ -91,7 +91,6 @@ public:
 
 private:
     void HandleMessage(const std::string& message);
-    void SendConnectPacket();
     void ParsePacket(const std::string& json);
     
     std::unique_ptr<easywsclient::WebSocket> m_websocket;

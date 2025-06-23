@@ -47,35 +47,6 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
         return false;
     }
 
-    m_host = host;
-    m_port = port;
-    
-    // Build WebSocket URL
-    std::stringstream url;
-    url << "ws://" << host << ":" << port;
-    
-    Printf("Archipelago: Connecting to %s...\n", url.str().c_str());
-    
-    m_status = ConnectionStatus::Connecting;
-    
-    // Create WebSocket connection
-    m_websocket.reset(easywsclient::WebSocket::from_url(url.str()));
-    
-    if (!m_websocket) {
-        Printf("Archipelago: Failed to connect to %s\n", url.str().c_str());
-        m_status = ConnectionStatus::Error;
-        return false;
-    }
-    
-    m_status = ConnectionStatus::Connected;
-    Printf("Archipelago: Connected successfully!\n");
-    
-    // Send the initial handshake packet immediately
-    // This is REQUIRED by the Archipelago protocol
-    SendConnectPacket();
-    
-    return true;
-}
 
 void ArchipelagoClient::SendConnectPacket() {
     // Create the Connect packet as required by Archipelago protocol
@@ -122,6 +93,33 @@ void ArchipelagoClient::SendConnectPacket() {
     std::string message = buffer.GetString();
     Printf("Archipelago: Sending Connect packet\n");
     SendPacket(message);
+}
+
+
+    m_host = host;
+    m_port = port;
+    
+    // Build WebSocket URL
+    std::stringstream url;
+    url << "ws://" << host << ":" << port;
+    
+    Printf("Archipelago: Connecting to %s...\n", url.str().c_str());
+    
+    m_status = ConnectionStatus::Connecting;
+    
+    // Create WebSocket connection
+    m_websocket.reset(easywsclient::WebSocket::from_url(url.str()));
+    
+    if (!m_websocket) {
+        Printf("Archipelago: Failed to connect to %s\n", url.str().c_str());
+        m_status = ConnectionStatus::Error;
+        return false;
+    }
+    
+    m_status = ConnectionStatus::Connected;
+    Printf("Archipelago: Connected successfully!\n");
+    
+    return true;
 }
 
 void ArchipelagoClient::Disconnect() {
