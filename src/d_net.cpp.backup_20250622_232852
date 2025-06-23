@@ -26,8 +26,6 @@
 //-----------------------------------------------------------------------------
 
 #include <stddef.h>
-
-#include "archipelago/archipelago_client.h"
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 
@@ -1894,8 +1892,6 @@ void TryRunTics (void)
 
 	// get available tics
 	NetUpdate ();
-	// Process Archipelago messages
-	Net_ProcessArchipelago();
 
 	if (pauseext)
 		return;
@@ -2944,22 +2940,6 @@ void Net_SkipCommand (int type, uint8_t **stream)
 	}
 
 	*stream += skip;
-}
-
-
-//==========================================================================
-//
-// Net_ProcessArchipelago
-//
-// Process Archipelago messages in the main game loop
-//
-//==========================================================================
-
-void Net_ProcessArchipelago()
-{
-	if (Archipelago::g_archipelago && Archipelago::g_archipelago->IsConnected()) {
-		Archipelago::g_archipelago->ProcessMessages();
-	}
 }
 
 // This was taken out of shared_hud, because UI code shouldn't do low level calculations that may change if the backing implementation changes.
