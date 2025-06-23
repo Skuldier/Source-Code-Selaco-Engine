@@ -92,8 +92,6 @@ extern short consistancy[MAXPLAYERS][BACKUPTICS];
 enum { NET_PeerToPeer, NET_PacketServer };
 uint8_t NetMode = NET_PeerToPeer;
 
-
-
 //
 // NETWORKING
 //
@@ -445,8 +443,6 @@ int ExpandTics (int low)
 	I_Error ("ExpandTics: strange value %i at maketic %i", low, maketic);
 	return 0;
 }
-
-
 
 //
 // HSendPacket
@@ -1384,7 +1380,6 @@ void NetUpdate (void)
 	}
 }
 
-
 //
 // D_ArbitrateNetStart
 //
@@ -1773,7 +1768,6 @@ bool D_CheckNetGame (void)
 	return true;
 }
 
-
 //
 // D_QuitNetGame
 // Called before quitting to leave a net game
@@ -1895,7 +1889,6 @@ void TryRunTics (void)
 	NetUpdate ();
 		// Process Archipelago messages
 		Net_ProcessArchipelago();
-
 
 	if (pauseext)
 		return;
@@ -2158,7 +2151,6 @@ uint8_t *FDynamicBuffer::GetData (int *len)
 		*len = m_Len;
 	return m_Len ? m_Data : NULL;
 }
-
 
 static int RemoveClass(FLevelLocals *Level, const PClass *cls)
 {
@@ -2894,6 +2886,21 @@ void Net_SkipCommand (int type, uint8_t **stream)
 					skip += strlen ((char *)(*stream + skip)) + 1;
 					break;
 				}
+
+//==========================================================================
+//
+// Net_ProcessArchipelago
+//
+// Process Archipelago messages in the main game loop
+//
+//==========================================================================
+
+void Net_ProcessArchipelago()
+{
+	if (Archipelago::g_archipelago && Archipelago::g_archipelago->IsConnected()) {
+		Archipelago::g_archipelago->ProcessMessages();
+	}
+
 			}
 			else
 			{
@@ -2930,13 +2937,8 @@ void Net_SkipCommand (int type, uint8_t **stream)
 			}
 			break;
 
-
 // Called from the main game loop
-void Net_ProcessArchipelago()
-{
-	if (Archipelago::g_archipelago && Archipelago::g_archipelago->IsConnected()) {
-		Archipelago::g_archipelago->ProcessMessages();
-	}
+
 }
 		case DEM_ADDSLOT:
 		case DEM_ADDSLOTDEFAULT:

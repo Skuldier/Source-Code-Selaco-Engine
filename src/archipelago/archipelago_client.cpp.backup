@@ -9,6 +9,9 @@
 #include <chrono>
 #include <thread>
 
+// Console output functions from the engine
+extern void Printf(const char* format, ...);
+
 namespace Archipelago {
 
 // Global instance
