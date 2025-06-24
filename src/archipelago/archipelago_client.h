@@ -7,6 +7,8 @@
 #include <mutex>
 #include <vector>
 
+#include <chrono>
+
 namespace Archipelago {
 
 // Basic packet types that Archipelago uses
@@ -90,6 +92,8 @@ private:
     // Private implementation class
     // This hides all the WebSocket details from the header
     class Impl;
+    
+    // IMPORTANT: m_impl must be initialized first in constructor
     std::unique_ptr<Impl> m_impl;
     
     // Internal methods
@@ -118,6 +122,7 @@ private:
     // State tracking
     int m_lastReceivedIndex;
     std::vector<int> m_checkedLocations;
+    std::chrono::steady_clock::time_point m_connectionTimeout;
 };
 
 // Global instance (singleton pattern)

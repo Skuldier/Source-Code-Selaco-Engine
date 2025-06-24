@@ -1,725 +1,364 @@
 #!/usr/bin/env python3
 """
-Fix for game freezing after sending Connect packet
-The issue is likely in the SendPacket or message processing
+Patch to add proper hostname resolution to Archipelago client
+Enables connection to remote servers like archipelago.gg
 """
 
 import os
-import re
+import shutil
+from datetime import datetime
 
-def create_fixed_client_cpp():
-    """Create a fixed version of archipelago_client.cpp that doesn't block"""
+def patch_archipelago_hostname_resolution():
+    """Add hostname resolution support to archipelago_client.cpp"""
     
-    content = '''// archipelago_client.cpp
-// WebSocket implementation for Archipelago using websocketpp with ASIO
-
-#include "archipelago_client.h"
-#include "../common/engine/printf.h"
-
-// Define ASIO standalone before including WebSocketPP
-#define ASIO_STANDALONE
-#define _WEBSOCKETPP_CPP11_STL_
-
-// WebSocketPP includes
-#include <websocketpp/config/asio_no_tls_client.hpp>
-#include <websocketpp/client.hpp>
-
-// JSON handling
-#include "rapidjson/document.h"
-#include "rapidjson/writer.h"
-#include "rapidjson/stringbuffer.h"
-
-// Standard library includes
-#include <iostream>
-#include <sstream>
-#include <chrono>
-#include <thread>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <asio/io_service.hpp>
-
-// Network includes for hostname resolution
+    client_cpp = "src/archipelago/archipelago_client.cpp"
+    
+    if not os.path.exists(client_cpp):
+        print(f"Error: {client_cpp} not found!")
+        print("Make sure you run this from the Selaco source root directory")
+        return False
+    
+    # Backup file
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_path = f"{client_cpp}.backup_{timestamp}"
+    shutil.copy2(client_cpp, backup_path)
+    print(f"Created backup: {backup_path}")
+    
+    # Read the current file
+    with open(client_cpp, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Add hostname resolution function after the ThreadMessage struct
+    hostname_resolver = '''
+// Hostname resolution helper
+std::string ResolveHostname(const std::string& hostname) {
+    // Quick check for localhost
+    if (hostname == "localhost" || hostname == "127.0.0.1") {
+        return "127.0.0.1";
+    }
+    
+    // Check if it's already an IP address (simple check)
+    bool isIP = true;
+    int dotCount = 0;
+    for (char c : hostname) {
+        if (c == '.') {
+            dotCount++;
+        } else if (!isdigit(c)) {
+            isIP = false;
+            break;
+        }
+    }
+    
+    if (isIP && dotCount == 3) {
+        return hostname; // Already an IP
+    }
+    
+    Printf("Archipelago: Resolving hostname '%s'...\\n", hostname.c_str());
+    
 #ifdef _WIN32
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
-    #pragma comment(lib, "ws2_32.lib")
+    // Windows already has WSA initialized in Impl constructor
+    struct hostent* host = gethostbyname(hostname.c_str());
+    if (host && host->h_addr_list[0]) {
+        struct in_addr addr;
+        memcpy(&addr, host->h_addr_list[0], sizeof(struct in_addr));
+        std::string resolved = inet_ntoa(addr);
+        Printf("Archipelago: Resolved to %s\\n", resolved.c_str());
+        return resolved;
+    }
 #else
-    #include <netdb.h>
-    #include <arpa/inet.h>
+    // POSIX systems
+    struct addrinfo hints = {0}, *result = nullptr;
+    hints.ai_family = AF_INET; // IPv4
+    hints.ai_socktype = SOCK_STREAM;
+    
+    int status = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
+    if (status == 0 && result) {
+        struct sockaddr_in* addr_in = (struct sockaddr_in*)result->ai_addr;
+        char ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &(addr_in->sin_addr), ip_str, INET_ADDRSTRLEN);
+        std::string resolved(ip_str);
+        freeaddrinfo(result);
+        Printf("Archipelago: Resolved to %s\\n", resolved.c_str());
+        return resolved;
+    }
+    
+    if (result) freeaddrinfo(result);
 #endif
-
-// Type definitions for cleaner code
-typedef websocketpp::client<websocketpp::config::asio_client> ws_client;
-typedef websocketpp::config::asio_client::message_type::ptr message_ptr;
-typedef websocketpp::connection_hdl connection_hdl;
-
-namespace Archipelago {
-
-// Global instance
-ArchipelagoClient* g_archipelago = nullptr;
-
-// Initialize the Archipelago client system
-void AP_Init() {
-    if (!g_archipelago) {
-        g_archipelago = new ArchipelagoClient();
-        Printf("Archipelago: Client initialized\\n");
-    }
+    
+    Printf("Archipelago: Failed to resolve hostname '%s', using as-is\\n", hostname.c_str());
+    return hostname; // Return original, WebSocketPP might handle it
 }
 
-// Shutdown the Archipelago client system
-void AP_Shutdown() {
-    if (g_archipelago) {
-        delete g_archipelago;
-        g_archipelago = nullptr;
-        Printf("Archipelago: Client shutdown\\n");
-    }
-}
-
-// Private implementation class to hide WebSocket details
-class ArchipelagoClient::Impl {
-public:
-    ws_client m_client;
-    ws_client::connection_ptr m_connection;
-    std::thread m_asio_thread;
-    std::atomic<bool> m_running{false};
-    std::atomic<bool> m_connected{false};
-    std::mutex m_send_mutex;
-    std::condition_variable m_connect_cv;
-    std::mutex m_connect_mutex;
+'''
     
-    // Message queues for thread-safe communication
-    std::queue<std::string> m_outgoing_queue;
-    std::queue<std::string> m_incoming_queue;
-    std::mutex m_outgoing_mutex;
-    std::mutex m_incoming_mutex;
+    # Find where to insert the resolver function
+    insert_pos = content.find("// Private implementation class")
+    if insert_pos == -1:
+        print("Error: Could not find insertion point for hostname resolver")
+        return False
     
-    // Constructor - sets up the WebSocket client
-    Impl() {
-        try {
-            #ifdef _WIN32
-            // Initialize Winsock for Windows
-            WSADATA wsaData;
-            int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-            if (result != 0) {
-                Printf("Archipelago: WSAStartup failed: %d\\n", result);
-            }
-            #endif
-            
-            // Clear access channels and set error channels
-            m_client.clear_access_channels(websocketpp::log::alevel::all);
-            m_client.set_error_channels(websocketpp::log::elevel::all);
-            
-            // Initialize ASIO
-            m_client.init_asio();
-            
-            // Set up message handler
-            m_client.set_message_handler(std::bind(
-                &Impl::on_message, this,
-                std::placeholders::_1, std::placeholders::_2
-            ));
-            
-            // Set up open handler
-            m_client.set_open_handler(std::bind(
-                &Impl::on_open, this,
-                std::placeholders::_1
-            ));
-            
-            // Set up close handler
-            m_client.set_close_handler(std::bind(
-                &Impl::on_close, this,
-                std::placeholders::_1
-            ));
-            
-            // Set up fail handler
-            m_client.set_fail_handler(std::bind(
-                &Impl::on_fail, this,
-                std::placeholders::_1
-            ));
-            
-        } catch (const std::exception& e) {
-            Printf("Archipelago: Error initializing WebSocket client: %s\\n", e.what());
-        }
-    }
+    # Insert the resolver function
+    content = content[:insert_pos] + hostname_resolver + content[insert_pos:]
     
-    // Destructor
-    ~Impl() {
-        Stop();
-        #ifdef _WIN32
-        WSACleanup();
-        #endif
-    }
-    
-    // Connection handlers
-    void on_open(connection_hdl hdl) {
-        Printf("Archipelago: WebSocket connection opened\\n");
-        m_connected = true;
-        m_connect_cv.notify_all();
-    }
-    
-    void on_close(connection_hdl hdl) {
-        Printf("Archipelago: WebSocket connection closed\\n");
-        m_connected = false;
-        auto con = m_client.get_con_from_hdl(hdl);
-        Printf("  Close code: %d, reason: %s\\n", 
-               con->get_remote_close_code(), 
-               con->get_remote_close_reason().c_str());
-    }
-    
-    void on_fail(connection_hdl hdl) {
-        Printf("Archipelago: WebSocket connection failed\\n");
-        m_connected = false;
-        m_connect_cv.notify_all();
-        
-        auto con = m_client.get_con_from_hdl(hdl);
-        auto ec = con->get_ec();
-        Printf("  Error: %s\\n", ec.message().c_str());
-    }
-    
-    void on_message(connection_hdl hdl, message_ptr msg) {
-        // Queue the message for processing in main thread
-        std::lock_guard<std::mutex> lock(m_incoming_mutex);
-        m_incoming_queue.push(msg->get_payload());
-    }
-    
-    // Start the ASIO processing thread
-    void Start() {
-        if (!m_running) {
-            m_running = true;
-            
-            // Reset the io_service in case it was stopped before
-            m_client.reset();
-            
-            m_asio_thread = std::thread([this]() {
-                Printf("Archipelago: ASIO thread started (ID: %d)\\n", std::this_thread::get_id());
-                try {
-                    // Keep the io_service running even if there's no work
-                    asio::io_service::work work(m_client.get_io_service());
-                    m_client.run();
-                } catch (const std::exception& e) {
-                    Printf("Archipelago: ASIO thread error: %s\\n", e.what());
-                }
-                Printf("Archipelago: ASIO thread ended\\n");
-            });
-            
-            // Wait a bit to ensure thread is running
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-    }
-    
-    // Stop the ASIO processing thread
-    void Stop() {
-        if (m_running) {
-            m_running = false;
-            
-            // Stop the io_service gracefully
-            m_client.get_io_service().stop();
-            
-            if (m_asio_thread.joinable()) {
-                m_asio_thread.join();
-            }
-        }
-    }
-    
-    // Process outgoing messages from queue (called from ASIO thread)
-    void ProcessOutgoingMessages() {
-        std::lock_guard<std::mutex> lock(m_outgoing_mutex);
-        while (!m_outgoing_queue.empty() && m_connected && m_connection) {
-            std::string message = m_outgoing_queue.front();
-            m_outgoing_queue.pop();
-            
-            websocketpp::lib::error_code ec;
-            m_client.send(m_connection, message, websocketpp::frame::opcode::text, ec);
-            
-            if (ec) {
-                Printf("Archipelago: Send failed: %s\\n", ec.message().c_str());
-            }
-        }
-    }
-    
-    // Queue a message for sending
-    void QueueMessage(const std::string& message) {
-        std::lock_guard<std::mutex> lock(m_outgoing_mutex);
-        m_outgoing_queue.push(message);
-        
-        // Post a task to the ASIO thread to send messages
-        m_client.get_io_service().post([this]() {
-            ProcessOutgoingMessages();
-        });
-    }
-    
-    // Get incoming messages
-    std::vector<std::string> GetIncomingMessages() {
-        std::vector<std::string> messages;
-        std::lock_guard<std::mutex> lock(m_incoming_mutex);
-        while (!m_incoming_queue.empty()) {
-            messages.push_back(m_incoming_queue.front());
-            m_incoming_queue.pop();
-        }
-        return messages;
-    }
-};
-
-// Main client constructor
-ArchipelagoClient::ArchipelagoClient() 
-    : m_impl(std::make_unique<Impl>())
-    , m_status(ConnectionStatus::Disconnected)
-    , m_port(38281)
-    , m_team(0)
-    , m_slotId(-1)
-    , m_lastReceivedIndex(0) {
-    Printf("Archipelago: Client object created\\n");
-}
-
-// Destructor
-ArchipelagoClient::~ArchipelagoClient() {
-    Printf("Archipelago: Client object destroying\\n");
-    Disconnect();
-}
-
-// Connect to an Archipelago server (non-blocking)
+    # Update the Connect method to use the resolver
+    old_connect = """// Connect to server
 bool ArchipelagoClient::Connect(const std::string& host, int port) {
-    Printf("Archipelago: Connect() called with host=%s, port=%d\\n", host.c_str(), port);
-    
-    if (m_status == ConnectionStatus::Connecting || m_status == ConnectionStatus::Error) {
-        Printf("Archipelago: Forcing disconnect due to bad state\\n");
-        Disconnect();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    
     if (m_status != ConnectionStatus::Disconnected) {
-        Printf("Archipelago: Already connected\\n");
+        Printf("Archipelago: Already connected or connecting\\n");
         return false;
     }
     
     m_host = host;
     m_port = port;
     
-    // Resolve hostname if needed
+    // Resolve hostname
     std::string resolved_host = host;
-    
-    if (host == "localhost" || host == "LOCALHOST" || host == "Localhost") {
+    if (host == "localhost") {
         resolved_host = "127.0.0.1";
-        Printf("Archipelago: Resolving localhost to 127.0.0.1\\n");
     }
     
-    // Build the WebSocket URI with resolved host
+    // Build URI
     std::stringstream uri;
-    uri << "ws://" << resolved_host << ":" << port;
+    uri << "ws://" << resolved_host << ":" << port;"""
     
-    Printf("Archipelago: Starting connection to: %s\\n", uri.str().c_str());
-    m_status = ConnectionStatus::Connecting;
+    new_connect = """// Connect to server
+bool ArchipelagoClient::Connect(const std::string& host, int port) {
+    if (m_status != ConnectionStatus::Disconnected) {
+        Printf("Archipelago: Already connected or connecting\\n");
+        return false;
+    }
     
-    // Store URI for the connection thread
-    std::string uri_str = uri.str();
+    m_host = host;
+    m_port = port;
     
-    // Start connection in a separate thread to avoid blocking the game
-    std::thread([this, uri_str]() {
-        try {
-            // Start the ASIO thread
-            m_impl->Start();
-            
-            // Give ASIO thread time to initialize
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
-            // Create a new connection
-            websocketpp::lib::error_code ec;
-            m_impl->m_connection = m_impl->m_client.get_connection(uri_str, ec);
-            
-            if (ec) {
-                Printf("Archipelago: Failed to create connection: %s\\n", ec.message().c_str());
-                m_status = ConnectionStatus::Disconnected;
-                m_impl->Stop();
-                return;
-            }
-            
-            // Queue the connection
-            m_impl->m_client.connect(m_impl->m_connection);
-            
-            // Wait for the connection to be established
-            std::unique_lock<std::mutex> lock(m_impl->m_connect_mutex);
-            if (m_impl->m_connect_cv.wait_for(lock, std::chrono::seconds(5), 
-                [this]{ return m_impl->m_connected.load(); })) {
-                
-                Printf("Archipelago: Connection established successfully\\n");
-                m_status = ConnectionStatus::Connected;
-                
-                // Queue the initial Connect packet instead of sending immediately
-                SendConnectPacket();
-                
-            } else {
-                Printf("Archipelago: Connection attempt timed out\\n");
-                m_status = ConnectionStatus::Disconnected;
-                
-                // Clean up the failed connection
-                if (m_impl->m_connection) {
-                    websocketpp::lib::error_code ec;
-                    m_impl->m_client.close(m_impl->m_connection, 
-                                           websocketpp::close::status::going_away, 
-                                           "Connection timeout", ec);
-                }
-                m_impl->Stop();
-            }
-            
-        } catch (const std::exception& e) {
-            Printf("Archipelago: Connection error: %s\\n", e.what());
-            m_status = ConnectionStatus::Disconnected;
-            m_impl->Stop();
-        }
-    }).detach();  // Detach the thread so it runs independently
+    // Resolve hostname to IP address
+    std::string resolved_host = ResolveHostname(host);
     
-    Printf("Archipelago: Connection attempt started (non-blocking)\\n");
-    return true;  // Connection attempt started successfully
-}
-
-// Send the initial Connect packet
-void ArchipelagoClient::SendConnectPacket() {
-    Printf("Archipelago: Queueing initial Connect packet\\n");
+    // Build URI
+    std::stringstream uri;
+    uri << "ws://" << resolved_host << ":" << port;"""
     
-    rapidjson::Document packet;
-    packet.SetObject();
-    auto& allocator = packet.GetAllocator();
-    
-    packet.AddMember("cmd", "Connect", allocator);
-    packet.AddMember("game", "Selaco", allocator);
-    packet.AddMember("name", "SelacoPlayer", allocator);
-    packet.AddMember("uuid", "selaco-client-001", allocator);
-    
-    rapidjson::Value version(rapidjson::kObjectType);
-    version.AddMember("class", "Version", allocator);
-    version.AddMember("major", 0, allocator);
-    version.AddMember("minor", 4, allocator);
-    version.AddMember("build", 0, allocator);
-    packet.AddMember("version", version, allocator);
-    
-    packet.AddMember("items_handling", 7, allocator);
-    
-    rapidjson::Value tags(rapidjson::kArrayType);
-    tags.PushBack("AP", allocator);
-    packet.AddMember("tags", tags, allocator);
-    
-    rapidjson::StringBuffer buffer;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-    packet.Accept(writer);
-    
-    // Queue the packet instead of sending immediately
-    SendPacket(buffer.GetString());
-}
-
-// Disconnect from the server
-void ArchipelagoClient::Disconnect() {
-    Printf("Archipelago: Disconnect() called\\n");
-    
-    if (m_impl->m_connection && m_impl->m_connected) {
-        websocketpp::lib::error_code ec;
-        m_impl->m_client.close(m_impl->m_connection, 
-                               websocketpp::close::status::going_away, 
-                               "Client disconnecting", ec);
+    if old_connect not in content:
+        print("Warning: Could not find exact Connect method to patch")
+        print("Trying alternative pattern...")
         
-        if (ec) {
-            Printf("Archipelago: Error during disconnect: %s\\n", ec.message().c_str());
-        }
+        # Try to find and replace just the hostname resolution part
+        old_pattern = """    // Resolve hostname
+    std::string resolved_host = host;
+    if (host == "localhost") {
+        resolved_host = "127.0.0.1";
+    }"""
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    
-    m_impl->Stop();
-    
-    // Reset connection pointer
-    m_impl->m_connection.reset();
-    m_impl->m_connected = false;
-    
-    m_status = ConnectionStatus::Disconnected;
-    m_checkedLocations.clear();
-    Printf("Archipelago: Disconnected\\n");
-}
-
-// Check if we're currently connected
-bool ArchipelagoClient::IsConnected() const {
-    return m_impl->m_connected && m_status == ConnectionStatus::Connected;
-}
-
-// Process any pending messages (called from main thread)
-void ArchipelagoClient::ProcessMessages() {
-    // Process incoming messages
-    auto messages = m_impl->GetIncomingMessages();
-    for (const auto& message : messages) {
-        HandleMessage(message);
-    }
-}
-
-// Queue a packet for sending
-void ArchipelagoClient::SendPacket(const std::string& json) {
-    if (!m_impl->m_connected) {
-        Printf("Archipelago: Cannot send - not connected\\n");
-        return;
-    }
-    
-    m_impl->QueueMessage(json);
-}
-
-// Authenticate to a specific slot
-void ArchipelagoClient::Authenticate(const std::string& slot, const std::string& password, int version) {
-    Printf("Archipelago: Authenticating as slot: %s\\n", slot.c_str());
-    
-    if (m_status != ConnectionStatus::Connected) {
-        Printf("Archipelago: Cannot authenticate - not connected\\n");
-        return;
-    }
-    
-    m_slot = slot;
-    
-    rapidjson::Document packet;
-    packet.SetObject();
-    auto& allocator = packet.GetAllocator();
-    
-    packet.AddMember("cmd", "ConnectSlot", allocator);
-    
-    rapidjson::Value slotValue;
-    slotValue.SetString(slot.c_str(), allocator);
-    packet.AddMember("name", slotValue, allocator);
-    
-    if (!password.empty()) {
-        rapidjson::Value passValue;
-        passValue.SetString(password.c_str(), allocator);
-        packet.AddMember("password", passValue, allocator);
-    }
-    
-    packet.AddMember("clientVer", version, allocator);
-    
-    rapidjson::StringBuffer buffer;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-    packet.Accept(writer);
-    
-    SendPacket(buffer.GetString());
-}
-
-// Send location checks
-void ArchipelagoClient::SendLocationCheck(int locationId) {
-    std::vector<int> locations = { locationId };
-    SendLocationChecks(locations);
-}
-
-void ArchipelagoClient::SendLocationChecks(const std::vector<int>& locationIds) {
-    rapidjson::Document doc;
-    doc.SetArray();
-    
-    rapidjson::Document packet;
-    packet.SetObject();
-    auto& allocator = packet.GetAllocator();
-    
-    packet.AddMember("cmd", "LocationChecks", allocator);
-    
-    rapidjson::Value locations(rapidjson::kArrayType);
-    for (int id : locationIds) {
-        locations.PushBack(id, allocator);
-        m_checkedLocations.push_back(id);
-    }
-    packet.AddMember("locations", locations, allocator);
-    
-    doc.PushBack(packet, allocator);
-    
-    rapidjson::StringBuffer buffer;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-    doc.Accept(writer);
-    
-    SendPacket(buffer.GetString());
-}
-
-// Update game status
-void ArchipelagoClient::StatusUpdate(const std::string& status) {
-    rapidjson::Document doc;
-    doc.SetArray();
-    
-    rapidjson::Document packet;
-    packet.SetObject();
-    auto& allocator = packet.GetAllocator();
-    
-    packet.AddMember("cmd", "StatusUpdate", allocator);
-    
-    int statusValue = 0;
-    if (status == "READY") statusValue = 10;
-    else if (status == "PLAYING") statusValue = 20;
-    else if (status == "GOAL") statusValue = 30;
-    
-    packet.AddMember("status", statusValue, allocator);
-    
-    doc.PushBack(packet, allocator);
-    
-    rapidjson::StringBuffer buffer;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-    doc.Accept(writer);
-    
-    SendPacket(buffer.GetString());
-}
-
-// Send a ping packet
-void ArchipelagoClient::SendPing() {
-    rapidjson::Document doc;
-    doc.SetArray();
-    
-    rapidjson::Document packet;
-    packet.SetObject();
-    auto& allocator = packet.GetAllocator();
-    
-    packet.AddMember("cmd", "Bounce", allocator);
-    packet.AddMember("data", rapidjson::Value().SetObject(), allocator);
-    packet["data"].AddMember("time", 
-        std::chrono::system_clock::now().time_since_epoch().count(), allocator);
-    
-    doc.PushBack(packet, allocator);
-    
-    rapidjson::StringBuffer buffer;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-    doc.Accept(writer);
-    
-    SendPacket(buffer.GetString());
-    Printf("Archipelago: Ping sent\\n");
-}
-
-// Handle incoming message
-void ArchipelagoClient::HandleMessage(const std::string& message) {
-    Printf("Archipelago: Received message: %s\\n", message.c_str());
-    
-    if (m_messageCallback) {
-        m_messageCallback(message);
-    }
-    
-    ParsePacket(message);
-}
-
-// Parse incoming packet
-void ArchipelagoClient::ParsePacket(const std::string& json) {
-    rapidjson::Document doc;
-    doc.Parse(json.c_str());
-    
-    if (doc.HasParseError() || !doc.IsArray() || doc.Empty()) {
-        Printf("Archipelago: Invalid packet received\\n");
-        return;
-    }
-    
-    for (rapidjson::SizeType i = 0; i < doc.Size(); i++) {
-        const rapidjson::Value& packet = doc[i];
+        new_pattern = """    // Resolve hostname to IP address
+    std::string resolved_host = ResolveHostname(host);"""
         
-        if (!packet.HasMember("cmd") || !packet["cmd"].IsString()) {
-            continue;
-        }
-        
-        std::string cmd = packet["cmd"].GetString();
-        
-        if (cmd == "RoomInfo") {
-            Printf("Archipelago: Received RoomInfo - handshake accepted!\\n");
-            
-        } else if (cmd == "Connected") {
-            Printf("Archipelago: Authentication successful!\\n");
-            m_status = ConnectionStatus::InGame;
-            
-            if (packet.HasMember("slot")) {
-                m_slotId = packet["slot"].GetInt();
-            }
-            if (packet.HasMember("team")) {
-                m_team = packet["team"].GetInt();
-            }
-            
-            if (packet.HasMember("missing_locations")) {
-                const auto& missing = packet["missing_locations"];
-                if (missing.IsArray()) {
-                    Printf("Archipelago: %d unchecked locations\\n", missing.Size());
-                }
-            }
-            
-        } else if (cmd == "ConnectionRefused") {
-            Printf("Archipelago: Connection refused!\\n");
+        if old_pattern in content:
+            content = content.replace(old_pattern, new_pattern)
+            print("Applied alternative hostname resolution patch")
+        else:
+            print("Error: Could not find hostname resolution code to patch")
+            return False
+    else:
+        content = content.replace(old_connect, new_connect)
+        print("Updated Connect method to use hostname resolver")
+    
+    # Add timeout handling for remote connections
+    timeout_addition = """
+    // Add connection timeout for remote servers
+    m_connectionTimeout = std::chrono::steady_clock::now() + std::chrono::seconds(10);"""
+    
+    # Find where to add timeout in Connect method
+    timeout_marker = "m_status = ConnectionStatus::Connecting;"
+    if timeout_marker in content:
+        content = content.replace(
+            timeout_marker,
+            timeout_marker + timeout_addition
+        )
+    
+    # Update ProcessMessages to check for timeout
+    old_process = """void ArchipelagoClient::ProcessMessages() {
+    // Get messages from worker thread
+    auto messages = m_impl->GetFromThread();
+    
+    Printf("Archipelago: ProcessMessages - got %d messages\\n", (int)messages.size());"""
+    
+    new_process = """void ArchipelagoClient::ProcessMessages() {
+    // Check for connection timeout
+    if (m_status == ConnectionStatus::Connecting) {
+        auto now = std::chrono::steady_clock::now();
+        if (now > m_connectionTimeout) {
+            Printf("Archipelago: Connection timeout after 10 seconds\\n");
             m_status = ConnectionStatus::Error;
-            
-            if (packet.HasMember("errors")) {
-                const auto& errors = packet["errors"];
-                if (errors.IsArray()) {
-                    for (rapidjson::SizeType j = 0; j < errors.Size(); j++) {
-                        if (errors[j].IsString()) {
-                            Printf("  Error: %s\\n", errors[j].GetString());
-                        }
-                    }
-                }
-            }
-            
-        } else if (cmd == "ReceivedItems") {
-            if (!packet.HasMember("items") || !packet["items"].IsArray()) {
-                continue;
-            }
-            
-            const auto& items = packet["items"];
-            for (rapidjson::SizeType j = 0; j < items.Size(); j++) {
-                const auto& item = items[j];
-                
-                int itemId = item["item"].GetInt();
-                int locationId = item["location"].GetInt();
-                int playerSlot = item["player"].GetInt();
-                
-                Printf("Archipelago: Received item %d from location %d (player %d)\\n", 
-                       itemId, locationId, playerSlot);
-                
-                if (m_itemReceivedCallback) {
-                    m_itemReceivedCallback(itemId, locationId, playerSlot);
-                }
-            }
-            
-            if (packet.HasMember("index")) {
-                m_lastReceivedIndex = packet["index"].GetInt();
-            }
-            
-        } else if (cmd == "PrintJSON") {
-            if (packet.HasMember("text")) {
-                Printf("Archipelago: %s\\n", packet["text"].GetString());
-            }
-            
-        } else if (cmd == "Bounced") {
-            Printf("Archipelago: Pong received\\n");
-            
-        } else {
-            Printf("Archipelago: Received packet type: %s\\n", cmd.c_str());
+            Disconnect();
+            return;
         }
     }
-}
-
-} // namespace Archipelago
-'''
     
-    filepath = "src/archipelago/archipelago_client.cpp"
+    // Get messages from worker thread
+    auto messages = m_impl->GetFromThread();
     
-    # Create backup
-    if os.path.exists(filepath):
-        backup_path = f"{filepath}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        shutil.copy2(filepath, backup_path)
-        print(f"Created backup: {backup_path}")
+    Printf("Archipelago: ProcessMessages - got %d messages\\n", (int)messages.size());"""
     
-    # Write the fixed version
-    with open(filepath, 'w') as f:
+    if old_process in content:
+        content = content.replace(old_process, new_process)
+        print("Added connection timeout handling")
+    
+    # Add member variable for timeout
+    timeout_member = """    // State tracking
+    int m_lastReceivedIndex;
+    std::vector<int> m_checkedLocations;
+    std::chrono::steady_clock::time_point m_connectionTimeout;"""
+    
+    old_member = """    // State tracking
+    int m_lastReceivedIndex;
+    std::vector<int> m_checkedLocations;"""
+    
+    if old_member in content:
+        content = content.replace(old_member, timeout_member)
+    
+    # Also need to add the include for chrono steady_clock if not present
+    if "#include <chrono>" in content and "steady_clock" not in content:
+        # Add steady_clock usage
+        chrono_include = "#include <chrono>"
+        content = content.replace(chrono_include, chrono_include + "\n#include <cstring>  // for memcpy")
+    
+    # Write the patched content
+    with open(client_cpp, 'w', encoding='utf-8') as f:
         f.write(content)
     
-    print(f"Created fixed version of {filepath}")
+    print(f"Successfully patched {client_cpp}")
+    
+    # Now patch the header file to add the timeout member
+    client_h = "src/archipelago/archipelago_client.h"
+    if os.path.exists(client_h):
+        with open(client_h, 'r', encoding='utf-8') as f:
+            header_content = f.read()
+        
+        # Add include if needed
+        if "#include <chrono>" not in header_content:
+            includes_end = header_content.find("namespace Archipelago {")
+            if includes_end != -1:
+                header_content = header_content[:includes_end] + "#include <chrono>\n\n" + header_content[includes_end:]
+        
+        # Add timeout member
+        old_tracking = """    // State tracking
+    int m_lastReceivedIndex;
+    std::vector<int> m_checkedLocations;"""
+        
+        new_tracking = """    // State tracking
+    int m_lastReceivedIndex;
+    std::vector<int> m_checkedLocations;
+    std::chrono::steady_clock::time_point m_connectionTimeout;"""
+        
+        if old_tracking in header_content:
+            header_content = header_content.replace(old_tracking, new_tracking)
+            
+            with open(client_h, 'w', encoding='utf-8') as f:
+                f.write(header_content)
+            print(f"Successfully patched {client_h}")
+    
     return True
 
-def main():
-    print("Fixing Archipelago Blocking Issue")
-    print("=================================\n")
+def create_remote_test_script():
+    """Create a test script for remote connections"""
     
-    print("The game freezes because the SendPacket function is trying to send immediately")
-    print("from the main thread, which can block. The fix queues messages for the ASIO thread.\n")
+    test_script = '''#!/usr/bin/env python3
+"""
+Test remote Archipelago server connections
+"""
+
+import asyncio
+import websockets
+import json
+import socket
+import sys
+
+async def test_remote_connection(host, port):
+    # First test DNS resolution
+    print(f"Testing connection to {host}:{port}")
+    print("\\n1. DNS Resolution Test:")
+    try:
+        ip = socket.gethostbyname(host)
+        print(f"   ✓ {host} resolves to {ip}")
+    except socket.gaierror as e:
+        print(f"   ✗ Failed to resolve {host}: {e}")
+        return
     
-    if create_fixed_client_cpp():
-        print("\n✓ Fix applied successfully!")
-        print("\nChanges made:")
-        print("1. Messages are now queued and sent from the ASIO thread")
-        print("2. Incoming messages are queued for processing in main thread")
-        print("3. No blocking operations in the main thread")
-        print("\nPlease rebuild the project and test again.")
-    else:
-        print("\n✗ Fix failed.")
+    # Test WebSocket connection
+    print("\\n2. WebSocket Connection Test:")
+    uri = f"ws://{host}:{port}"
     
-    return 0
+    try:
+        print(f"   Connecting to {uri}...")
+        async with websockets.connect(uri, timeout=10) as websocket:
+            print("   ✓ WebSocket connection established!")
+            
+            # Get RoomInfo
+            print("\\n3. Archipelago Protocol Test:")
+            room_info_raw = await asyncio.wait_for(websocket.recv(), timeout=5)
+            room_info = json.loads(room_info_raw)[0]
+            
+            if room_info.get("cmd") == "RoomInfo":
+                print("   ✓ Received valid RoomInfo packet")
+                print(f"   Games: {', '.join(room_info.get('games', []))}")
+                print(f"   Version: {room_info['version']['major']}.{room_info['version']['minor']}.{room_info['version']['build']}")
+                
+                if "Selaco" in room_info.get('games', []):
+                    print("   ✓ Selaco is loaded on this server!")
+                else:
+                    print("   ⚠ Selaco is NOT loaded on this server")
+                    print("   Available games:", ', '.join(room_info.get('games', [])))
+            else:
+                print("   ✗ Unexpected initial packet:", room_info.get("cmd"))
+                
+    except asyncio.TimeoutError:
+        print("   ✗ Connection timed out")
+    except Exception as e:
+        print(f"   ✗ Connection failed: {e}")
+        
+    print("\\nTest complete!")
 
 if __name__ == "__main__":
-    import shutil
-    from datetime import datetime
-    exit(main())
+    if len(sys.argv) < 2:
+        print("Usage: python test_remote.py <host> [port]")
+        print("Example: python test_remote.py archipelago.gg 58697")
+        sys.exit(1)
+    
+    host = sys.argv[1]
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else 38281
+    
+    asyncio.run(test_remote_connection(host, port))
+'''
+    
+    with open("test_remote.py", 'w') as f:
+        f.write(test_script)
+    
+    print("Created test_remote.py")
+
+if __name__ == "__main__":
+    print("Archipelago Hostname Resolution Patch")
+    print("=====================================")
+    
+    # Check if we're in the right directory
+    if not os.path.exists("src/archipelago/archipelago_client.cpp"):
+        print("Error: This script must be run from the Selaco source root directory")
+        print("Current directory:", os.getcwd())
+        exit(1)
+    
+    # Apply the patch
+    if patch_archipelago_hostname_resolution():
+        print("\nPatch applied successfully!")
+        print("\nNext steps:")
+        print("1. Rebuild the project:")
+        print("   cd build")
+        print("   cmake ..")
+        print("   make -j$(nproc)")
+        print("\n2. Test remote connection:")
+        print("   python test_remote.py archipelago.gg 58697")
+        print("\n3. In Selaco:")
+        print("   ap_connect archipelago.gg 58697")
+        print("   ap_status")
+        
+        create_remote_test_script()
+    else:
+        print("\nPatch failed! Check the error messages above.")

@@ -79,66 +79,6 @@ struct ThreadMessage {
     int port;
 };
 
-
-// Hostname resolution helper
-std::string ResolveHostname(const std::string& hostname) {
-    // Quick check for localhost
-    if (hostname == "localhost" || hostname == "127.0.0.1") {
-        return "127.0.0.1";
-    }
-    
-    // Check if it's already an IP address (simple check)
-    bool isIP = true;
-    int dotCount = 0;
-    for (char c : hostname) {
-        if (c == '.') {
-            dotCount++;
-        } else if (!isdigit(c)) {
-            isIP = false;
-            break;
-        }
-    }
-    
-    if (isIP && dotCount == 3) {
-        return hostname; // Already an IP
-    }
-    
-    Printf("Archipelago: Resolving hostname '%s'...\n", hostname.c_str());
-    
-#ifdef _WIN32
-    // Windows already has WSA initialized in Impl constructor
-    struct hostent* host = gethostbyname(hostname.c_str());
-    if (host && host->h_addr_list[0]) {
-        struct in_addr addr;
-        memcpy(&addr, host->h_addr_list[0], sizeof(struct in_addr));
-        std::string resolved = inet_ntoa(addr);
-        Printf("Archipelago: Resolved to %s\n", resolved.c_str());
-        return resolved;
-    }
-#else
-    // POSIX systems
-    struct addrinfo hints = {0}, *result = nullptr;
-    hints.ai_family = AF_INET; // IPv4
-    hints.ai_socktype = SOCK_STREAM;
-    
-    int status = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
-    if (status == 0 && result) {
-        struct sockaddr_in* addr_in = (struct sockaddr_in*)result->ai_addr;
-        char ip_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &(addr_in->sin_addr), ip_str, INET_ADDRSTRLEN);
-        std::string resolved(ip_str);
-        freeaddrinfo(result);
-        Printf("Archipelago: Resolved to %s\n", resolved.c_str());
-        return resolved;
-    }
-    
-    if (result) freeaddrinfo(result);
-#endif
-    
-    Printf("Archipelago: Failed to resolve hostname '%s', using as-is\n", hostname.c_str());
-    return hostname; // Return original, WebSocketPP might handle it
-}
-
 // Private implementation class
 class ArchipelagoClient::Impl {
 public:
@@ -414,8 +354,11 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
     m_host = host;
     m_port = port;
     
-    // Resolve hostname to IP address
-    std::string resolved_host = ResolveHostname(host);
+    // Resolve hostname
+    std::string resolved_host = host;
+    if (host == "localhost") {
+        resolved_host = "127.0.0.1";
+    }
     
     // Build URI
     std::stringstream uri;
@@ -451,8 +394,6 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
     m_impl->SendToThread(msg);
     
     m_status = ConnectionStatus::Connecting;
-    // Add connection timeout for remote servers
-    m_connectionTimeout = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     return true;
 }
 
@@ -484,17 +425,6 @@ bool ArchipelagoClient::IsConnected() const {
 
 // Process messages (called from main thread)
 void ArchipelagoClient::ProcessMessages() {
-    // Check for connection timeout
-    if (m_status == ConnectionStatus::Connecting) {
-        auto now = std::chrono::steady_clock::now();
-        if (now > m_connectionTimeout) {
-            Printf("Archipelago: Connection timeout after 10 seconds\n");
-            m_status = ConnectionStatus::Error;
-            Disconnect();
-            return;
-        }
-    }
-    
     // Get messages from worker thread
     auto messages = m_impl->GetFromThread();
     
