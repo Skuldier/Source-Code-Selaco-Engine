@@ -98,35 +98,31 @@ public:
     const std::string& GetHost() const { return m_host; }
     int GetPort() const { return m_port; }
 
-    // Check if we've already checked a location
-    bool HasCheckedLocation(int locationId) const {
+    // Check if we've already marked this location as checked
+    bool IsLocationChecked(int locationId) const {
         return m_checkedLocations.find(locationId) != m_checkedLocations.end();
     }
 
 private:
-    // Private implementation
     class Impl;
     std::unique_ptr<Impl> m_impl;
-
-    // Connection state
+    
     ConnectionStatus m_status;
+    
+    // Connection info
     std::string m_host;
     int m_port;
     
-    // Game state
+    // Session info
     std::string m_slot;
     int m_slotId;
     int m_team;
     
-    // Locations we've already checked
+    // Game state
     std::set<int> m_checkedLocations;
+    int m_lastReceivedIndex;
     
-    // Message handling
-    void HandleMessage(const std::string& message);
-    void ParsePacket(const std::string& json);
-    void SendConnectPacket();
-    
-    // Message queue for outgoing messages
+    // Message queues
     std::queue<std::string> m_outgoingQueue;
     std::mutex m_queueMutex;
     
@@ -134,19 +130,18 @@ private:
     MessageCallback m_messageCallback;
     ItemReceivedCallback m_itemReceivedCallback;
     
-    // For tracking received items
-    int m_lastReceivedIndex;
-    
-    // Timeout tracking
-    std::chrono::steady_clock::time_point m_connectionTimeout;
+    // Internal methods
+    void SendConnectPacket();
+    void HandleMessage(const std::string& message);
+    void ParsePacket(const std::string& json);
 };
 
-// Global functions for engine integration
+// Global instance
+extern ArchipelagoClient* g_archipelago;
+
+// Initialization functions
 void AP_Init();
 void AP_Shutdown();
 void AP_Tick();
-
-// Global client instance
-extern ArchipelagoClient* g_archipelago;
 
 } // namespace Archipelago

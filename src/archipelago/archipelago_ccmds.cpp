@@ -206,10 +206,10 @@ void AP_Tick() {
     // Note: Not calling EnsureInit here to avoid spam
     EnsureArchipelagoInit();
     
-    if (!g_archipelago || !g_archipelago->IsConnected()) {
+    if (!g_archipelago) {
         return;
     }
     
-    // Process messages silently (no logging)
+    // Process messages and log queue (ProcessMessages now handles the log queue)
     g_archipelago->ProcessMessages();
 }

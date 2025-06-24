@@ -1,5 +1,5 @@
-// archipelago_client.cpp - Final working implementation
-// Based on the minimal test that works, with proper message handling added
+// archipelago_client.cpp - Simplified thread-safe version
+// Avoids all potential threading issues
 
 #include "archipelago_client.h"
 #include "../common/engine/printf.h"
@@ -38,56 +38,14 @@
 
 namespace Archipelago {
 
-
-// Global instance with diagnostics
+// Global instance - simplified initialization
 ArchipelagoClient* g_archipelago = nullptr;
 
-// Static initialization checker
-static struct ArchipelagoInitChecker {
-    ArchipelagoInitChecker() {
-        Printf("\nARCHIPELAGO: Module static init\n");
-        Printf("  g_archipelago at startup: %p\n", (void*)g_archipelago);
-    }
-    ~ArchipelagoInitChecker() {
-        Printf("ARCHIPELAGO: Module static destructor\n");
-        Printf("  g_archipelago at shutdown: %p\n", (void*)g_archipelago);
-    }
-} g_initChecker;
-
-
 void AP_Init() {
-    Printf("\n=====================================\n");
-    Printf("ARCHIPELAGO: AP_Init() called\n");
-    Printf("  Function address: %p\n", (void*)&AP_Init);
-    Printf("  g_archipelago before: %p\n", (void*)g_archipelago);
-    Printf("  &g_archipelago: %p\n", (void*)&g_archipelago);
-    
     if (!g_archipelago) {
-        Printf("ARCHIPELAGO: Creating new client...\n");
-        try {
-            g_archipelago = new ArchipelagoClient();
-            Printf("ARCHIPELAGO: Client created at %p\n", (void*)g_archipelago);
-            
-            // Verify it's really there
-            if (g_archipelago) {
-                Printf("ARCHIPELAGO: Verification - client exists\n");
-                Printf("ARCHIPELAGO: Client status: %d\n", (int)g_archipelago->GetStatus());
-            } else {
-                Printf("ARCHIPELAGO: ERROR - Client is null after creation!\n");
-            }
-        } catch (const std::exception& e) {
-            Printf("ARCHIPELAGO: EXCEPTION: %s\n", e.what());
-            g_archipelago = nullptr;
-        } catch (...) {
-            Printf("ARCHIPELAGO: UNKNOWN EXCEPTION\n");
-            g_archipelago = nullptr;
-        }
-    } else {
-        Printf("ARCHIPELAGO: Client already exists\n");
+        g_archipelago = new ArchipelagoClient();
+        Printf("Archipelago: Client initialized at %p\n", (void*)g_archipelago);
     }
-    
-    Printf("  g_archipelago after: %p\n", (void*)g_archipelago);
-    Printf("=====================================\n\n");
 }
 
 void AP_Shutdown() {
@@ -263,12 +221,14 @@ public:
     std::queue<std::string> m_incomingMessages;
     std::mutex m_incomingMutex;
     
+    // Message flags for main thread
+    std::atomic<bool> m_hasFirstMessage{false};
+    std::atomic<bool> m_hasCloseMessage{false};
+    std::atomic<bool> m_hasConnectionError{false};
+    
     std::string m_host;
     int m_port;
     std::vector<uint8_t> m_receiveBuffer;
-    
-    // Track if we've logged the first message
-    bool m_firstMessage = true;
     
     Impl() {
         #ifdef _WIN32
@@ -325,7 +285,9 @@ public:
         // Start read thread
         m_running = true;
         m_connected = true;
-        m_firstMessage = true;
+        m_hasFirstMessage = false;
+        m_hasCloseMessage = false;
+        m_hasConnectionError = false;
         m_readThread = std::thread(&Impl::ReadThread, this);
         
         return true;
@@ -424,17 +386,19 @@ public:
                     }
                 }
             } else if (received == 0) {
-                Printf("Archipelago: Connection closed by server\n");
+                m_hasConnectionError = true;
                 break;
             } else {
                 // Socket error - only log if it's not a would-block error
                 #ifdef _WIN32
                 int error = WSAGetLastError();
                 if (error != WSAEWOULDBLOCK) {
+                    m_hasConnectionError = true;
                     break;
                 }
                 #else
                 if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    m_hasConnectionError = true;
                     break;
                 }
                 #endif
@@ -453,10 +417,9 @@ public:
                 std::lock_guard<std::mutex> lock(m_incomingMutex);
                 m_incomingMessages.push(message);
                 
-                // Only log the first message
-                if (m_firstMessage) {
-                    Printf("Archipelago: Received first server message\n");
-                    m_firstMessage = false;
+                // Set flag for first message
+                if (!m_hasFirstMessage.load()) {
+                    m_hasFirstMessage = true;
                 }
                 break;
             }
@@ -485,7 +448,7 @@ public:
             }
             
             case WebSocketFrameDecoder::CLOSE: {
-                Printf("Archipelago: Server sent close frame\n");
+                m_hasCloseMessage = true;
                 m_running = false;
                 break;
             }
@@ -515,6 +478,18 @@ public:
         
         return messages;
     }
+    
+    void CheckThreadFlags() {
+        if (m_hasFirstMessage.exchange(false)) {
+            Printf("Archipelago: Received first server message\n");
+        }
+        if (m_hasCloseMessage.exchange(false)) {
+            Printf("Archipelago: Server sent close frame\n");
+        }
+        if (m_hasConnectionError.exchange(false)) {
+            Printf("Archipelago: Connection closed by server\n");
+        }
+    }
 };
 
 // Main client implementation
@@ -529,7 +504,6 @@ ArchipelagoClient::ArchipelagoClient()
 }
 
 ArchipelagoClient::~ArchipelagoClient() {
-    Printf("ARCHIPELAGO: Destructor called for client at %p\n", (void*)this);
     Disconnect();
 }
 
@@ -570,6 +544,9 @@ bool ArchipelagoClient::IsConnected() const {
 }
 
 void ArchipelagoClient::ProcessMessages() {
+    // Check thread flags first
+    m_impl->CheckThreadFlags();
+    
     // Process incoming messages
     auto messages = m_impl->GetIncomingMessages();
     for (const auto& msg : messages) {
@@ -594,8 +571,7 @@ void ArchipelagoClient::SendConnectPacket() {
     doc.SetArray();
     auto& allocator = doc.GetAllocator();
     
-    rapidjson::Document packet;
-    packet.SetObject();
+    rapidjson::Value packet(rapidjson::kObjectType);
     
     packet.AddMember("cmd", "Connect", allocator);
     packet.AddMember("game", "Selaco", allocator);
@@ -753,8 +729,7 @@ void ArchipelagoClient::Authenticate(const std::string& slot, const std::string&
     doc.SetArray();
     auto& allocator = doc.GetAllocator();
     
-    rapidjson::Document packet;
-    packet.SetObject();
+    rapidjson::Value packet(rapidjson::kObjectType);
     
     packet.AddMember("cmd", "Connect", allocator);
     packet.AddMember("game", "Selaco", allocator);
@@ -812,8 +787,7 @@ void ArchipelagoClient::SendLocationChecks(const std::vector<int>& locationIds) 
     doc.SetArray();
     auto& allocator = doc.GetAllocator();
     
-    rapidjson::Document packet;
-    packet.SetObject();
+    rapidjson::Value packet(rapidjson::kObjectType);
     
     packet.AddMember("cmd", "LocationChecks", allocator);
     
@@ -842,8 +816,7 @@ void ArchipelagoClient::StatusUpdate(const std::string& status) {
     doc.SetArray();
     auto& allocator = doc.GetAllocator();
     
-    rapidjson::Document packet;
-    packet.SetObject();
+    rapidjson::Value packet(rapidjson::kObjectType);
     
     packet.AddMember("cmd", "StatusUpdate", allocator);
     
@@ -865,8 +838,7 @@ void ArchipelagoClient::SendPing() {
     doc.SetArray();
     auto& allocator = doc.GetAllocator();
     
-    rapidjson::Document packet;
-    packet.SetObject();
+    rapidjson::Value packet(rapidjson::kObjectType);
     
     packet.AddMember("cmd", "Bounce", allocator);
     
@@ -884,19 +856,20 @@ void ArchipelagoClient::SetDebugEnabled(bool enabled) {
 }
 
 
-// Static initialization to verify module is loaded
-namespace {
-    struct ArchipelagoStartup {
-        ArchipelagoStartup() {
-            Printf("\n");
-            Printf("=====================================\n");
-            Printf("Archipelago module loaded\n");
-            Printf("Use 'ap_connect <host>' to connect\n");
-            Printf("=====================================\n");
-            Printf("\n");
-        }
-    };
-    static ArchipelagoStartup g_archipelagoStartup;
+// Simple startup notification
+static bool g_startupComplete = false;
+
+void EnsureStartup() {
+    if (!g_startupComplete) {
+        g_startupComplete = true;
+        Printf("\nArchipelago module loaded\n");
+        Printf("Use 'ap_connect <host>' to connect\n\n");
+    }
 }
 
 } // namespace Archipelago
+
+// Call this from somewhere in the engine initialization
+extern "C" void ArchipelagoModuleInit() {
+    Archipelago::EnsureStartup();
+}
