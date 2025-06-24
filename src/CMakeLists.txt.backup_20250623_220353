@@ -1184,26 +1184,99 @@ set (PCH_SOURCES
 )
 
 
+
+if(NOT Boost_FOUND)
+    message(STATUS "Boost not found, using standalone ASIO")
+    add_definitions(-DASIO_STANDALONE)
+endif()
+
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/libraries/websocketpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include
+)
+
 # Archipelago integration
 set( ARCHIPELAGO_SOURCES
 	archipelago/archipelago_client.cpp
 	archipelago/archipelago_ccmds.cpp 
 	archipelago/archipelago_client.h)
 
-# Network configuration for Archipelago simple socket client
-# Windows sockets are already linked via ws2_32 in PROJECT_LIBRARIES
-# No additional configuration needed for the simple implementation
+# ASIO and WebSocketPP configuration for Archipelago
+# ASIO is required by WebSocketPP for networking
+set( ASIO_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libraries/asio/asio/include" )
+set( WEBSOCKETPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../libraries" )
 
+# Add include directories
+include_directories( 
+    ${WEBSOCKETPP_ROOT}
+    ${ASIO_INCLUDE_DIR}
+)
 
+# ASIO and WebSocketPP definitions
+add_definitions( 
+    -DASIO_STANDALONE                    # Use standalone ASIO (not Boost)
+    -D_WEBSOCKETPP_CPP11_STL_            # Use C++11 features
+    -D_WEBSOCKETPP_CPP11_FUNCTIONAL_    # Use std::function
+)
+
+# Windows-specific settings
+if( WIN32 )
+    add_definitions( 
+        -D_WIN32_WINNT=0x0601           # Windows 7 or later
+        -DWIN32_LEAN_AND_MEAN           # Exclude rarely-used Windows headers
+        -DNOMINMAX                      # Don't define min/max macros
+        -D_WEBSOCKETPP_MINGW_THREAD_    # Use MinGW threads if MinGW
+    )
+endif()
 
 # Disable SSL/TLS support in WebSocketPP (we don't need it for Archipelago)
-
+add_definitions( -D_WEBSOCKETPP_NO_TLS_ )
 
 # Set C++11 standard if not already set
 if(NOT CMAKE_CXX_STANDARD)
     set(CMAKE_CXX_STANDARD 11)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
 endif()
+
+
+
+# IMPORTANT: The include directory must be the parent of websocketpp folder
+# because WebSocketPP uses includes like <websocketpp/config/asio_client.hpp>
+set( WEBSOCKETPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../libraries" )
+
+# Add include directories
+include_directories( ${WEBSOCKETPP_ROOT} )
+
+# WebSocketPP requires C++11 features
+add_definitions( -D_WEBSOCKETPP_CPP11_STL_ )
+
+# Disable threading for simpler implementation (can be enabled later if needed)
+add_definitions( -D_WEBSOCKETPP_NO_THREADING_ )
+
+# Use standalone ASIO (no Boost dependency)
+add_definitions( -DASIO_STANDALONE )
+
+# Windows-specific settings
+if( WIN32 )
+    add_definitions( -D_WIN32_WINNT=0x0601 )  # Windows 7 or later
+    add_definitions( -DWIN32_LEAN_AND_MEAN )
+    add_definitions( -DNOMINMAX )              # Prevent Windows.h from defining min/max macros
+endif()
+
+
+
+set( WEBSOCKETPP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libraries/websocketpp" )
+
+# Add WebSocketPP to include directories
+include_directories( ${WEBSOCKETPP_INCLUDE_DIR} )
+
+# WebSocketPP requires Boost ASIO or standalone ASIO
+# For now, we'll use the standalone ASIO that comes with WebSocketPP
+add_definitions( -DASIO_STANDALONE )
+add_definitions( -D_WEBSOCKETPP_CPP11_STL_ )
+
+# Remove easywsclient from the build
+list(REMOVE_ITEM ARCHIPELAGO_SOURCES )
 
 
 if( ${HAVE_VM_JIT} )

@@ -1,3 +1,6 @@
+// archipelago_client.h
+// Header file for Archipelago client with enhanced debugging support
+
 #pragma once
 
 #include <string>
@@ -6,7 +9,6 @@
 #include <queue>
 #include <mutex>
 #include <vector>
-
 #include <chrono>
 
 namespace Archipelago {
@@ -85,8 +87,14 @@ public:
     using ItemReceivedCallback = std::function<void(int itemId, int locationId, int playerSlot)>;
     void SetItemReceivedCallback(ItemReceivedCallback callback) { m_itemReceivedCallback = callback; }
 
-    // Testing
+    // Testing and debugging
     void SendPing();
+    void SetDebugEnabled(bool enabled);
+
+    // Get current slot information
+    const std::string& GetSlot() const { return m_slot; }
+    int GetSlotId() const { return m_slotId; }
+    int GetTeam() const { return m_team; }
 
 private:
     // Private implementation class
@@ -131,5 +139,8 @@ extern ArchipelagoClient* g_archipelago;
 // Initialization functions
 void AP_Init();
 void AP_Shutdown();
+
+// Game loop tick function
+void AP_Tick();
 
 } // namespace Archipelago

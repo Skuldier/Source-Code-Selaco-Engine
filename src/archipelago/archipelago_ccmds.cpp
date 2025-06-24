@@ -1,4 +1,5 @@
-// Console commands for Archipelago integration
+// archipelago_ccmds.cpp
+// Console commands for Archipelago integration with enhanced debugging
 
 #include "c_dispatch.h"
 #include "../common/engine/printf.h"
@@ -6,6 +7,12 @@
 #include <sstream>
 #include <thread>
 #include <chrono>
+
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "ws2_32.lib")
+#endif
 
 using namespace Archipelago;
 
@@ -17,6 +24,7 @@ CCMD(ap_connect)
         Printf("Examples:\n");
         Printf("  ap_connect archipelago.gg:58697\n");
         Printf("  ap_connect localhost 38281\n");
+        Printf("  ap_connect 127.0.0.1 38281\n");
         return;
     }
     
@@ -138,6 +146,7 @@ CCMD(ap_status)
             break;
         case ConnectionStatus::Connected:
             Printf("Archipelago: Connected (not authenticated)\n");
+            Printf("Use 'ap_auth <slot_name>' to authenticate\n");
             break;
         case ConnectionStatus::InGame:
             Printf("Archipelago: Connected and authenticated\n");
@@ -213,9 +222,11 @@ CCMD(ap_debug)
     
     if (debugEnabled) {
         g_archipelago->SetMessageCallback(DebugMessageCallback);
+        g_archipelago->SetDebugEnabled(true);
         Printf("Archipelago debug messages enabled\n");
     } else {
         g_archipelago->SetMessageCallback(nullptr);
+        g_archipelago->SetDebugEnabled(false);
         Printf("Archipelago debug messages disabled\n");
     }
 }
@@ -283,6 +294,7 @@ CCMD(ap_test)
             Printf("Possible reasons:\n");
             Printf("- Server is not running\n");
             Printf("- Wrong host/port\n");
+            Printf("- Firewall blocking connection\n");
             Printf("- Network issues\n");
             return;
         }
@@ -367,6 +379,241 @@ CCMD(ap_quick)
         argv[1], argv[2], 
         (argv.argc() >= 4) ? argv[3] : "");
     C_DoCommand(command.GetChars());
+}
+
+// Test basic threading without WebSocket
+CCMD(ap_threadtest)
+{
+    Printf("=== Basic Thread Test ===\n");
+    Printf("Testing if threading works without WebSocket...\n");
+    
+    class TestThread {
+    public:
+        std::thread m_thread;
+        std::atomic<bool> m_running{false};
+        std::atomic<int> m_counter{0};
+        
+        void Start() {
+            Printf("Starting test thread...\n");
+            m_running = true;
+            
+            try {
+                m_thread = std::thread([this]() {
+                    Printf("Test thread started (ID: %d)\n", std::this_thread::get_id());
+                    
+                    while (m_running && m_counter < 10) {
+                        m_counter++;
+                        Printf("  Thread tick %d\n", m_counter.load());
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    }
+                    
+                    Printf("Test thread finished\n");
+                });
+            } catch (const std::exception& e) {
+                Printf("ERROR: Failed to create thread: %s\n", e.what());
+            }
+        }
+        
+        void Stop() {
+            Printf("Stopping test thread...\n");
+            m_running = false;
+            if (m_thread.joinable()) {
+                m_thread.join();
+                Printf("Thread joined successfully\n");
+            }
+        }
+    };
+    
+    TestThread test;
+    test.Start();
+    
+    // Wait for it to complete
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    
+    test.Stop();
+    
+    Printf("\n=== Thread Test Results ===\n");
+    if (test.m_counter >= 10) {
+        Printf("SUCCESS: Basic threading works correctly\n");
+        Printf("The issue is likely with WebSocketPP, not threading\n");
+    } else {
+        Printf("ERROR: Thread didn't complete (%d/10 ticks)\n", test.m_counter.load());
+        Printf("There's a fundamental threading issue\n");
+    }
+}
+
+// Test basic socket functionality
+CCMD(ap_socktest)
+{
+    Printf("=== Basic Socket Test ===\n");
+    
+    #ifdef _WIN32
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        Printf("WSAStartup failed\n");
+        return;
+    }
+    #endif
+    
+    // Create a socket
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+        Printf("Failed to create socket\n");
+        #ifdef _WIN32
+        WSACleanup();
+        #endif
+        return;
+    }
+    Printf("Socket created successfully\n");
+    
+    // Set timeout
+    #ifdef _WIN32
+    DWORD timeout = 1000; // 1 second
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));
+    #else
+    struct timeval timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    #endif
+    
+    // Try a simple recv (will timeout since not connected)
+    char buffer[1024];
+    int result = recv(sock, buffer, sizeof(buffer), 0);
+    Printf("Recv returned: %d\n", result);
+    
+    #ifdef _WIN32
+    if (result == SOCKET_ERROR) {
+        Printf("Socket error: %d\n", WSAGetLastError());
+    }
+    closesocket(sock);
+    WSACleanup();
+    #else
+    if (result < 0) {
+        Printf("Socket error: %d\n", errno);
+    }
+    close(sock);
+    #endif
+    
+    Printf("Socket test completed without crash\n");
+}
+
+// Test minimal socket connection
+CCMD(ap_sockconnect)
+{
+    if (argv.argc() < 2) {
+        Printf("Usage: ap_sockconnect <host> [port]\n");
+        Printf("Example: ap_sockconnect localhost 38281\n");
+        return;
+    }
+    
+    std::string host = argv[1];
+    int port = 38281;
+    if (argv.argc() >= 3) {
+        port = atoi(argv[2]);
+    }
+    
+    Printf("=== Socket Connection Test ===\n");
+    Printf("Testing connection to %s:%d\n", host.c_str(), port);
+    
+    #ifdef _WIN32
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+    #endif
+    
+    // Create socket
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+        Printf("Failed to create socket\n");
+        #ifdef _WIN32
+        WSACleanup();
+        #endif
+        return;
+    }
+    
+    // Resolve host
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    
+    // Try to parse as IP first
+    #ifdef _WIN32
+        // Use inet_addr for Windows compatibility
+        unsigned long addr = inet_addr(host.c_str());
+        if (addr != INADDR_NONE) {
+            server_addr.sin_addr.s_addr = addr;
+        } else {
+            // Not an IP, try hostname resolution
+            struct hostent* he = gethostbyname(host.c_str());
+            if (he == nullptr) {
+                Printf("Failed to resolve hostname\n");
+                closesocket(sock);
+                WSACleanup();
+                return;
+            }
+            memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);
+        }
+    #else
+        if (inet_pton(AF_INET, host.c_str(), &server_addr.sin_addr) != 1) {
+            // Not an IP, try hostname resolution
+            struct hostent* he = gethostbyname(host.c_str());
+            if (he == nullptr) {
+                Printf("Failed to resolve hostname\n");
+                close(sock);
+                return;
+            }
+            memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);
+        }
+    #endif
+    
+    // Try to connect
+    Printf("Attempting connection...\n");
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
+        #ifdef _WIN32
+        Printf("Connection failed: %d\n", WSAGetLastError());
+        closesocket(sock);
+        WSACleanup();
+        #else
+        Printf("Connection failed: %d\n", errno);
+        close(sock);
+        #endif
+        return;
+    }
+    
+    Printf("SUCCESS: Connected to %s:%d\n", host.c_str(), port);
+    
+    // Try to receive some data
+    char buffer[256];
+    int received = recv(sock, buffer, sizeof(buffer) - 1, 0);
+    if (received > 0) {
+        buffer[received] = '\0';
+        Printf("Received %d bytes\n", received);
+    }
+    
+    #ifdef _WIN32
+    closesocket(sock);
+    WSACleanup();
+    #else
+    close(sock);
+    #endif
+    
+    Printf("Socket connection test completed\n");
+}
+
+// Force crash for testing
+CCMD(ap_crash)
+{
+    Printf("WARNING: This will intentionally crash for testing!\n");
+    Printf("Crashing in 3...\n");
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    Printf("2...\n");
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    Printf("1...\n");
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    
+    // Intentional null pointer dereference
+    int* p = nullptr;
+    *p = 42;
 }
 
 // Process messages - called from game loop
