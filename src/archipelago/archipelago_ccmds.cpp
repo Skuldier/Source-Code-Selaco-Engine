@@ -8,9 +8,43 @@
 
 using namespace Archipelago;
 
+
+
+// Failsafe initialization
+static void EnsureInit() {
+    if (!g_archipelago) {
+        Printf("\nARCHIPELAGO: Emergency init required!\n");
+        Printf("  &g_archipelago = %p\n", (void*)&g_archipelago);
+        Printf("  g_archipelago = %p\n", (void*)g_archipelago);
+        AP_Init();
+        if (!g_archipelago) {
+            Printf("ARCHIPELAGO: Emergency init FAILED!\n");
+        } else {
+            Printf("ARCHIPELAGO: Emergency init succeeded\n");
+        }
+    }
+}
+
+// Emergency initialization function
+static void EnsureArchipelagoInit() {
+    if (!g_archipelago) {
+        Printf("Warning: Archipelago not initialized, performing emergency init\n");
+        AP_Init();
+        if (!g_archipelago) {
+            Printf("FATAL: Emergency init failed!\n");
+        }
+    }
+}
+
 // Connect to Archipelago server
 CCMD(ap_connect)
 {
+    Printf("\n=== AP_CONNECT START ===\n");
+    Printf("g_archipelago pointer: %p\n", (void*)g_archipelago);
+    Printf("&g_archipelago address: %p\n", (void*)&g_archipelago);
+    
+    EnsureInit();
+    
     if (argv.argc() < 2) {
         Printf("Usage: ap_connect <host> [port]\n");
         Printf("Example: ap_connect localhost 38281\n");
@@ -18,9 +52,11 @@ CCMD(ap_connect)
     }
     
     if (!g_archipelago) {
-        Printf("Archipelago client not initialized!\n");
+        Printf("FATAL: Still no client after EnsureInit!\n");
         return;
     }
+    
+    Printf("Client exists at %p, proceeding...\n", (void*)g_archipelago);
     
     std::string host = argv[1];
     int port = 38281;
@@ -36,17 +72,29 @@ CCMD(ap_connect)
     
     Printf("Archipelago: Connecting to %s:%d...\n", host.c_str(), port);
     
-    if (g_archipelago->Connect(host, port)) {
-        Printf("Archipelago: Connection successful!\n");
-        Printf("Archipelago: Waiting for server response...\n");
-    } else {
-        Printf("Archipelago: Connection failed!\n");
+    try {
+        if (g_archipelago->Connect(host, port)) {
+            Printf("Archipelago: Connection successful!\n");
+            Printf("Archipelago: Waiting for server response...\n");
+        } else {
+            Printf("Archipelago: Connection failed!\n");
+        }
+    } catch (const std::exception& e) {
+        Printf("EXCEPTION during connect: %s\n", e.what());
+    } catch (...) {
+        Printf("UNKNOWN EXCEPTION during connect\n");
     }
+    
+    Printf("=== AP_CONNECT END ===\n\n");
 }
 
 // Disconnect from server
 CCMD(ap_disconnect)
 {
+    EnsureInit();
+    
+    EnsureArchipelagoInit();
+    
     if (!g_archipelago) {
         Printf("Archipelago client not initialized!\n");
         return;
@@ -64,6 +112,10 @@ CCMD(ap_disconnect)
 // Status check
 CCMD(ap_status)
 {
+    EnsureInit();
+    
+    EnsureArchipelagoInit();
+    
     if (!g_archipelago) {
         Printf("Archipelago client not initialized!\n");
         return;
@@ -86,6 +138,10 @@ CCMD(ap_status)
 // Send ping
 CCMD(ap_ping)
 {
+    EnsureInit();
+    
+    EnsureArchipelagoInit();
+    
     if (!g_archipelago || !g_archipelago->IsConnected()) {
         Printf("Not connected to Archipelago server!\n");
         return;
@@ -98,6 +154,10 @@ CCMD(ap_ping)
 // Authenticate
 CCMD(ap_auth)
 {
+    EnsureInit();
+    
+    EnsureArchipelagoInit();
+    
     if (argv.argc() < 2) {
         Printf("Usage: ap_auth <slot_name> [password]\n");
         return;
@@ -122,6 +182,10 @@ CCMD(ap_auth)
 // Check locations
 CCMD(ap_check)
 {
+    EnsureInit();
+    
+    EnsureArchipelagoInit();
+    
     if (argv.argc() < 2) {
         Printf("Usage: ap_check <location_id>\n");
         return;
@@ -139,6 +203,9 @@ CCMD(ap_check)
 
 // This function is called every frame by the engine
 void AP_Tick() {
+    // Note: Not calling EnsureInit here to avoid spam
+    EnsureArchipelagoInit();
+    
     if (!g_archipelago || !g_archipelago->IsConnected()) {
         return;
     }

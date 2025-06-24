@@ -38,14 +38,56 @@
 
 namespace Archipelago {
 
-// Global instance
+
+// Global instance with diagnostics
 ArchipelagoClient* g_archipelago = nullptr;
 
-void AP_Init() {
-    if (!g_archipelago) {
-        g_archipelago = new ArchipelagoClient();
-        Printf("Archipelago: Client initialized\n");
+// Static initialization checker
+static struct ArchipelagoInitChecker {
+    ArchipelagoInitChecker() {
+        Printf("\nARCHIPELAGO: Module static init\n");
+        Printf("  g_archipelago at startup: %p\n", (void*)g_archipelago);
     }
+    ~ArchipelagoInitChecker() {
+        Printf("ARCHIPELAGO: Module static destructor\n");
+        Printf("  g_archipelago at shutdown: %p\n", (void*)g_archipelago);
+    }
+} g_initChecker;
+
+
+void AP_Init() {
+    Printf("\n=====================================\n");
+    Printf("ARCHIPELAGO: AP_Init() called\n");
+    Printf("  Function address: %p\n", (void*)&AP_Init);
+    Printf("  g_archipelago before: %p\n", (void*)g_archipelago);
+    Printf("  &g_archipelago: %p\n", (void*)&g_archipelago);
+    
+    if (!g_archipelago) {
+        Printf("ARCHIPELAGO: Creating new client...\n");
+        try {
+            g_archipelago = new ArchipelagoClient();
+            Printf("ARCHIPELAGO: Client created at %p\n", (void*)g_archipelago);
+            
+            // Verify it's really there
+            if (g_archipelago) {
+                Printf("ARCHIPELAGO: Verification - client exists\n");
+                Printf("ARCHIPELAGO: Client status: %d\n", (int)g_archipelago->GetStatus());
+            } else {
+                Printf("ARCHIPELAGO: ERROR - Client is null after creation!\n");
+            }
+        } catch (const std::exception& e) {
+            Printf("ARCHIPELAGO: EXCEPTION: %s\n", e.what());
+            g_archipelago = nullptr;
+        } catch (...) {
+            Printf("ARCHIPELAGO: UNKNOWN EXCEPTION\n");
+            g_archipelago = nullptr;
+        }
+    } else {
+        Printf("ARCHIPELAGO: Client already exists\n");
+    }
+    
+    Printf("  g_archipelago after: %p\n", (void*)g_archipelago);
+    Printf("=====================================\n\n");
 }
 
 void AP_Shutdown() {
@@ -477,15 +519,17 @@ public:
 
 // Main client implementation
 ArchipelagoClient::ArchipelagoClient() 
-    : m_impl(std::make_unique<Impl>())
-    , m_status(ConnectionStatus::Disconnected)
-    , m_port(38281)
-    , m_team(0)
-    , m_slotId(-1)
-    , m_lastReceivedIndex(0) {
+    : m_impl(std::make_unique<Impl>()),
+      m_status(ConnectionStatus::Disconnected),
+      m_port(38281),
+      m_slotId(-1),
+      m_team(0),
+      m_lastReceivedIndex(0)
+{
 }
 
 ArchipelagoClient::~ArchipelagoClient() {
+    Printf("ARCHIPELAGO: Destructor called for client at %p\n", (void*)this);
     Disconnect();
 }
 
@@ -837,6 +881,22 @@ void ArchipelagoClient::SendPing() {
 
 void ArchipelagoClient::SetDebugEnabled(bool enabled) {
     // For future use
+}
+
+
+// Static initialization to verify module is loaded
+namespace {
+    struct ArchipelagoStartup {
+        ArchipelagoStartup() {
+            Printf("\n");
+            Printf("=====================================\n");
+            Printf("Archipelago module loaded\n");
+            Printf("Use 'ap_connect <host>' to connect\n");
+            Printf("=====================================\n");
+            Printf("\n");
+        }
+    };
+    static ArchipelagoStartup g_archipelagoStartup;
 }
 
 } // namespace Archipelago
