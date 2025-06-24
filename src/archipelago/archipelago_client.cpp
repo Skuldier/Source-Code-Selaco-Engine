@@ -1,5 +1,5 @@
 // archipelago_client.cpp
-// WebSocket implementation for Archipelago using websocketpp with ASIO
+// Thread-safe WebSocketPP implementation for Archipelago
 
 #include "archipelago_client.h"
 #include "../common/engine/printf.h"
@@ -25,7 +25,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <queue>
-#include <asio/io_service.hpp>
+#include <memory>
 
 // Network includes for hostname resolution
 #ifdef _WIN32
@@ -37,7 +37,7 @@
     #include <arpa/inet.h>
 #endif
 
-// Type definitions for cleaner code
+// Type definitions
 typedef websocketpp::client<websocketpp::config::asio_client> ws_client;
 typedef websocketpp::config::asio_client::message_type::ptr message_ptr;
 typedef websocketpp::connection_hdl connection_hdl;
@@ -64,186 +64,267 @@ void AP_Shutdown() {
     }
 }
 
-// Private implementation class to hide WebSocket details
+// Message structure for thread-safe communication
+struct ThreadMessage {
+    enum Type {
+        CONNECT,
+        DISCONNECT,
+        SEND,
+        RECEIVED
+    };
+    
+    Type type;
+    std::string data;
+    std::string extra;
+    int port;
+};
+
+// Private implementation class
 class ArchipelagoClient::Impl {
 public:
     ws_client m_client;
-    ws_client::connection_ptr m_connection;
-    std::thread m_asio_thread;
+    connection_hdl m_hdl;
+    std::thread m_thread;
+    
+    // Thread synchronization
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_connected{false};
-    std::mutex m_send_mutex;
-    std::condition_variable m_connect_cv;
-    std::mutex m_connect_mutex;
+    std::atomic<ConnectionStatus> m_status{ConnectionStatus::Disconnected};
     
-    // Message queues for thread-safe communication
-    std::queue<std::string> m_outgoing_queue;
-    std::queue<std::string> m_incoming_queue;
-    std::mutex m_outgoing_mutex;
-    std::mutex m_incoming_mutex;
+    // Message queues
+    std::queue<ThreadMessage> m_toThread;
+    std::queue<ThreadMessage> m_fromThread;
+    std::mutex m_toThreadMutex;
+    std::mutex m_fromThreadMutex;
     
-    // Constructor - sets up the WebSocket client
+    // Constructor
     Impl() {
         try {
             #ifdef _WIN32
-            // Initialize Winsock for Windows
             WSADATA wsaData;
-            int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-            if (result != 0) {
-                Printf("Archipelago: WSAStartup failed: %d\n", result);
-            }
+            WSAStartup(MAKEWORD(2, 2), &wsaData);
             #endif
             
-            // Clear access channels and set error channels
+            // Set up WebSocket client
             m_client.clear_access_channels(websocketpp::log::alevel::all);
-            m_client.set_error_channels(websocketpp::log::elevel::all);
+            m_client.clear_error_channels(websocketpp::log::elevel::all);
             
-            // Initialize ASIO
             m_client.init_asio();
             
-            // Set up message handler
-            m_client.set_message_handler(std::bind(
-                &Impl::on_message, this,
-                std::placeholders::_1, std::placeholders::_2
-            ));
+            // Set handlers
+            m_client.set_open_handler([this](connection_hdl hdl) {
+                on_open(hdl);
+            });
             
-            // Set up open handler
-            m_client.set_open_handler(std::bind(
-                &Impl::on_open, this,
-                std::placeholders::_1
-            ));
+            m_client.set_close_handler([this](connection_hdl hdl) {
+                on_close(hdl);
+            });
             
-            // Set up close handler
-            m_client.set_close_handler(std::bind(
-                &Impl::on_close, this,
-                std::placeholders::_1
-            ));
+            m_client.set_fail_handler([this](connection_hdl hdl) {
+                on_fail(hdl);
+            });
             
-            // Set up fail handler
-            m_client.set_fail_handler(std::bind(
-                &Impl::on_fail, this,
-                std::placeholders::_1
-            ));
+            m_client.set_message_handler([this](connection_hdl hdl, message_ptr msg) {
+                on_message(hdl, msg);
+            });
             
         } catch (const std::exception& e) {
-            Printf("Archipelago: Error initializing WebSocket client: %s\n", e.what());
+            Printf("Archipelago: Error initializing: %s\n", e.what());
         }
     }
     
     // Destructor
     ~Impl() {
-        Stop();
+        StopThread();
         #ifdef _WIN32
         WSACleanup();
         #endif
     }
     
-    // Connection handlers
-    void on_open(connection_hdl hdl) {
-        Printf("Archipelago: WebSocket connection opened\n");
-        m_connected = true;
-        m_connect_cv.notify_all();
-    }
-    
-    void on_close(connection_hdl hdl) {
-        Printf("Archipelago: WebSocket connection closed\n");
-        m_connected = false;
-        auto con = m_client.get_con_from_hdl(hdl);
-        Printf("  Close code: %d, reason: %s\n", 
-               con->get_remote_close_code(), 
-               con->get_remote_close_reason().c_str());
-    }
-    
-    void on_fail(connection_hdl hdl) {
-        Printf("Archipelago: WebSocket connection failed\n");
-        m_connected = false;
-        m_connect_cv.notify_all();
+    // Start the worker thread
+    void StartThread() {
+        if (m_running.exchange(true)) return; // Already running
         
-        auto con = m_client.get_con_from_hdl(hdl);
-        auto ec = con->get_ec();
-        Printf("  Error: %s\n", ec.message().c_str());
-    }
-    
-    void on_message(connection_hdl hdl, message_ptr msg) {
-        // Queue the message for processing in main thread
-        std::lock_guard<std::mutex> lock(m_incoming_mutex);
-        m_incoming_queue.push(msg->get_payload());
-    }
-    
-    // Start the ASIO processing thread
-    void Start() {
-        if (!m_running) {
-            m_running = true;
-            
-            // Reset the io_service in case it was stopped before
-            m_client.reset();
-            
-            m_asio_thread = std::thread([this]() {
-                Printf("Archipelago: ASIO thread started (ID: %d)\n", std::this_thread::get_id());
-                try {
-                    // Keep the io_service running even if there's no work
-                    asio::io_service::work work(m_client.get_io_service());
-                    m_client.run();
-                } catch (const std::exception& e) {
-                    Printf("Archipelago: ASIO thread error: %s\n", e.what());
-                }
-                Printf("Archipelago: ASIO thread ended\n");
-            });
-            
-            // Wait a bit to ensure thread is running
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-    }
-    
-    // Stop the ASIO processing thread
-    void Stop() {
-        if (m_running) {
-            m_running = false;
-            
-            // Stop the io_service gracefully
-            m_client.get_io_service().stop();
-            
-            if (m_asio_thread.joinable()) {
-                m_asio_thread.join();
-            }
-        }
-    }
-    
-    // Process outgoing messages from queue (called from ASIO thread)
-    void ProcessOutgoingMessages() {
-        std::lock_guard<std::mutex> lock(m_outgoing_mutex);
-        while (!m_outgoing_queue.empty() && m_connected && m_connection) {
-            std::string message = m_outgoing_queue.front();
-            m_outgoing_queue.pop();
-            
-            websocketpp::lib::error_code ec;
-            m_client.send(m_connection, message, websocketpp::frame::opcode::text, ec);
-            
-            if (ec) {
-                Printf("Archipelago: Send failed: %s\n", ec.message().c_str());
-            }
-        }
-    }
-    
-    // Queue a message for sending
-    void QueueMessage(const std::string& message) {
-        std::lock_guard<std::mutex> lock(m_outgoing_mutex);
-        m_outgoing_queue.push(message);
-        
-        // Post a task to the ASIO thread to send messages
-        m_client.get_io_service().post([this]() {
-            ProcessOutgoingMessages();
+        m_thread = std::thread([this]() {
+            ThreadLoop();
         });
     }
     
-    // Get incoming messages
-    std::vector<std::string> GetIncomingMessages() {
-        std::vector<std::string> messages;
-        std::lock_guard<std::mutex> lock(m_incoming_mutex);
-        while (!m_incoming_queue.empty()) {
-            messages.push_back(m_incoming_queue.front());
-            m_incoming_queue.pop();
+    // Stop the worker thread
+    void StopThread() {
+        if (!m_running.exchange(false)) return; // Not running
+        
+        // Wake up the thread
+        m_client.get_io_service().stop();
+        
+        if (m_thread.joinable()) {
+            m_thread.join();
         }
+    }
+    
+    // Main thread loop
+    void ThreadLoop() {
+        Printf("Archipelago: Worker thread started\n");
+        
+        while (m_running) {
+            try {
+                // Process pending messages
+                ProcessThreadMessages();
+                
+                // Run ASIO for a short time
+                m_client.get_io_service().reset();
+                m_client.get_io_service().run_for(std::chrono::milliseconds(10));
+                
+                // Small sleep to prevent busy waiting
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                
+            } catch (const std::exception& e) {
+                Printf("Archipelago: Thread error: %s\n", e.what());
+            }
+        }
+        
+        Printf("Archipelago: Worker thread stopped\n");
+    }
+    
+    // Process messages sent to the thread
+    void ProcessThreadMessages() {
+        std::unique_lock<std::mutex> lock(m_toThreadMutex);
+        while (!m_toThread.empty()) {
+            ThreadMessage msg = m_toThread.front();
+            m_toThread.pop();
+            lock.unlock();
+            
+            switch (msg.type) {
+                case ThreadMessage::CONNECT:
+                    DoConnect(msg.data, msg.port);
+                    break;
+                case ThreadMessage::DISCONNECT:
+                    DoDisconnect();
+                    break;
+                case ThreadMessage::SEND:
+                    DoSend(msg.data);
+                    break;
+            }
+            
+            lock.lock();
+        }
+    }
+    
+    // Perform connection
+    void DoConnect(const std::string& uri, int port) {
+        try {
+            websocketpp::lib::error_code ec;
+            auto con = m_client.get_connection(uri, ec);
+            
+            if (ec) {
+                Printf("Archipelago: Connection creation failed: %s\n", ec.message().c_str());
+                m_status = ConnectionStatus::Error;
+                return;
+            }
+            
+            m_hdl = con->get_handle();
+            m_client.connect(con);
+            
+        } catch (const std::exception& e) {
+            Printf("Archipelago: Connect error: %s\n", e.what());
+            m_status = ConnectionStatus::Error;
+        }
+    }
+    
+    // Perform disconnection
+    void DoDisconnect() {
+        try {
+            if (m_connected) {
+                websocketpp::lib::error_code ec;
+                m_client.close(m_hdl, websocketpp::close::status::going_away, "Client disconnect", ec);
+            }
+        } catch (...) {
+            // Ignore errors during disconnect
+        }
+    }
+    
+    // Send a message
+    void DoSend(const std::string& message) {
+        try {
+            if (m_connected) {
+                websocketpp::lib::error_code ec;
+                m_client.send(m_hdl, message, websocketpp::frame::opcode::text, ec);
+                
+                if (ec) {
+                    Printf("Archipelago: Send error: %s\n", ec.message().c_str());
+                }
+            }
+        } catch (const std::exception& e) {
+            Printf("Archipelago: Send exception: %s\n", e.what());
+        }
+    }
+    
+    // Connection opened
+    void on_open(connection_hdl hdl) {
+        m_connected = true;
+        m_status = ConnectionStatus::Connected;
+        
+        // Queue a message for the main thread
+        ThreadMessage msg;
+        msg.type = ThreadMessage::RECEIVED;
+        msg.data = "__CONNECTED__";
+        
+        std::lock_guard<std::mutex> lock(m_fromThreadMutex);
+        m_fromThread.push(msg);
+    }
+    
+    // Connection closed
+    void on_close(connection_hdl hdl) {
+        m_connected = false;
+        m_status = ConnectionStatus::Disconnected;
+        
+        ThreadMessage msg;
+        msg.type = ThreadMessage::RECEIVED;
+        msg.data = "__DISCONNECTED__";
+        
+        std::lock_guard<std::mutex> lock(m_fromThreadMutex);
+        m_fromThread.push(msg);
+    }
+    
+    // Connection failed
+    void on_fail(connection_hdl hdl) {
+        m_connected = false;
+        m_status = ConnectionStatus::Error;
+        
+        ThreadMessage msg;
+        msg.type = ThreadMessage::RECEIVED;
+        msg.data = "__FAILED__";
+        
+        std::lock_guard<std::mutex> lock(m_fromThreadMutex);
+        m_fromThread.push(msg);
+    }
+    
+    // Message received
+    void on_message(connection_hdl hdl, message_ptr msg) {
+        ThreadMessage tmsg;
+        tmsg.type = ThreadMessage::RECEIVED;
+        tmsg.data = msg->get_payload();
+        
+        std::lock_guard<std::mutex> lock(m_fromThreadMutex);
+        m_fromThread.push(tmsg);
+    }
+    
+    // Send message to thread
+    void SendToThread(const ThreadMessage& msg) {
+        std::lock_guard<std::mutex> lock(m_toThreadMutex);
+        m_toThread.push(msg);
+    }
+    
+    // Get messages from thread
+    std::vector<ThreadMessage> GetFromThread() {
+        std::vector<ThreadMessage> messages;
+        std::lock_guard<std::mutex> lock(m_fromThreadMutex);
+        
+        while (!m_fromThread.empty()) {
+            messages.push_back(m_fromThread.front());
+            m_fromThread.pop();
+        }
+        
         return messages;
     }
 };
@@ -256,113 +337,117 @@ ArchipelagoClient::ArchipelagoClient()
     , m_team(0)
     , m_slotId(-1)
     , m_lastReceivedIndex(0) {
-    Printf("Archipelago: Client object created\n");
+    Printf("Archipelago: Client created\n");
 }
 
 // Destructor
 ArchipelagoClient::~ArchipelagoClient() {
-    Printf("Archipelago: Client object destroying\n");
     Disconnect();
+    Printf("Archipelago: Client destroyed\n");
 }
 
-// Connect to an Archipelago server (non-blocking)
+// Connect to server
 bool ArchipelagoClient::Connect(const std::string& host, int port) {
-    Printf("Archipelago: Connect() called with host=%s, port=%d\n", host.c_str(), port);
-    
-    if (m_status == ConnectionStatus::Connecting || m_status == ConnectionStatus::Error) {
-        Printf("Archipelago: Forcing disconnect due to bad state\n");
-        Disconnect();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    
     if (m_status != ConnectionStatus::Disconnected) {
-        Printf("Archipelago: Already connected\n");
+        Printf("Archipelago: Already connected or connecting\n");
         return false;
     }
     
     m_host = host;
     m_port = port;
     
-    // Resolve hostname if needed
+    // Resolve hostname
     std::string resolved_host = host;
-    
-    if (host == "localhost" || host == "LOCALHOST" || host == "Localhost") {
+    if (host == "localhost") {
         resolved_host = "127.0.0.1";
-        Printf("Archipelago: Resolving localhost to 127.0.0.1\n");
     }
     
-    // Build the WebSocket URI with resolved host
+    // Build URI
     std::stringstream uri;
     uri << "ws://" << resolved_host << ":" << port;
     
-    Printf("Archipelago: Starting connection to: %s\n", uri.str().c_str());
+    Printf("Archipelago: Connecting to %s\n", uri.str().c_str());
+    
+    // Start thread if not running
+    m_impl->StartThread();
+    
+    // Send connect message to thread
+    ThreadMessage msg;
+    msg.type = ThreadMessage::CONNECT;
+    msg.data = uri.str();
+    msg.port = port;
+    m_impl->SendToThread(msg);
+    
     m_status = ConnectionStatus::Connecting;
-    
-    // Store URI for the connection thread
-    std::string uri_str = uri.str();
-    
-    // Start connection in a separate thread to avoid blocking the game
-    std::thread([this, uri_str]() {
-        try {
-            // Start the ASIO thread
-            m_impl->Start();
-            
-            // Give ASIO thread time to initialize
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
-            // Create a new connection
-            websocketpp::lib::error_code ec;
-            m_impl->m_connection = m_impl->m_client.get_connection(uri_str, ec);
-            
-            if (ec) {
-                Printf("Archipelago: Failed to create connection: %s\n", ec.message().c_str());
-                m_status = ConnectionStatus::Disconnected;
-                m_impl->Stop();
-                return;
-            }
-            
-            // Queue the connection
-            m_impl->m_client.connect(m_impl->m_connection);
-            
-            // Wait for the connection to be established
-            std::unique_lock<std::mutex> lock(m_impl->m_connect_mutex);
-            if (m_impl->m_connect_cv.wait_for(lock, std::chrono::seconds(5), 
-                [this]{ return m_impl->m_connected.load(); })) {
-                
-                Printf("Archipelago: Connection established successfully\n");
-                m_status = ConnectionStatus::Connected;
-                
-                // Queue the initial Connect packet instead of sending immediately
-                SendConnectPacket();
-                
-            } else {
-                Printf("Archipelago: Connection attempt timed out\n");
-                m_status = ConnectionStatus::Disconnected;
-                
-                // Clean up the failed connection
-                if (m_impl->m_connection) {
-                    websocketpp::lib::error_code ec;
-                    m_impl->m_client.close(m_impl->m_connection, 
-                                           websocketpp::close::status::going_away, 
-                                           "Connection timeout", ec);
-                }
-                m_impl->Stop();
-            }
-            
-        } catch (const std::exception& e) {
-            Printf("Archipelago: Connection error: %s\n", e.what());
-            m_status = ConnectionStatus::Disconnected;
-            m_impl->Stop();
-        }
-    }).detach();  // Detach the thread so it runs independently
-    
-    Printf("Archipelago: Connection attempt started (non-blocking)\n");
-    return true;  // Connection attempt started successfully
+    return true;
 }
 
-// Send the initial Connect packet
+// Disconnect from server
+void ArchipelagoClient::Disconnect() {
+    if (m_status == ConnectionStatus::Disconnected) return;
+    
+    // Send disconnect message to thread
+    ThreadMessage msg;
+    msg.type = ThreadMessage::DISCONNECT;
+    m_impl->SendToThread(msg);
+    
+    // Give it time to disconnect
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    
+    // Stop thread
+    m_impl->StopThread();
+    
+    m_status = ConnectionStatus::Disconnected;
+    m_checkedLocations.clear();
+    Printf("Archipelago: Disconnected\n");
+}
+
+// Check connection status
+bool ArchipelagoClient::IsConnected() const {
+    return m_impl->m_connected.load();
+}
+
+// Process messages (called from main thread)
+void ArchipelagoClient::ProcessMessages() {
+    // Get messages from worker thread
+    auto messages = m_impl->GetFromThread();
+    
+    for (const auto& msg : messages) {
+        if (msg.data == "__CONNECTED__") {
+            Printf("Archipelago: Connected successfully\n");
+            m_status = ConnectionStatus::Connected;
+            SendConnectPacket();
+        } else if (msg.data == "__DISCONNECTED__") {
+            Printf("Archipelago: Disconnected\n");
+            m_status = ConnectionStatus::Disconnected;
+        } else if (msg.data == "__FAILED__") {
+            Printf("Archipelago: Connection failed\n");
+            m_status = ConnectionStatus::Error;
+        } else {
+            // Regular message
+            HandleMessage(msg.data);
+        }
+    }
+    
+    // Update our status from the implementation
+    m_status = m_impl->m_status.load();
+}
+
+// Send packet to server
+void ArchipelagoClient::SendPacket(const std::string& json) {
+    if (m_status != ConnectionStatus::Connected && m_status != ConnectionStatus::InGame) {
+        return;
+    }
+    
+    ThreadMessage msg;
+    msg.type = ThreadMessage::SEND;
+    msg.data = json;
+    m_impl->SendToThread(msg);
+}
+
+// Send initial connect packet
 void ArchipelagoClient::SendConnectPacket() {
-    Printf("Archipelago: Queueing initial Connect packet\n");
+    Printf("Archipelago: Sending Connect packet\n");
     
     rapidjson::Document packet;
     packet.SetObject();
@@ -390,66 +475,11 @@ void ArchipelagoClient::SendConnectPacket() {
     rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
     packet.Accept(writer);
     
-    // Queue the packet instead of sending immediately
     SendPacket(buffer.GetString());
 }
 
-// Disconnect from the server
-void ArchipelagoClient::Disconnect() {
-    Printf("Archipelago: Disconnect() called\n");
-    
-    if (m_impl->m_connection && m_impl->m_connected) {
-        websocketpp::lib::error_code ec;
-        m_impl->m_client.close(m_impl->m_connection, 
-                               websocketpp::close::status::going_away, 
-                               "Client disconnecting", ec);
-        
-        if (ec) {
-            Printf("Archipelago: Error during disconnect: %s\n", ec.message().c_str());
-        }
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    
-    m_impl->Stop();
-    
-    // Reset connection pointer
-    m_impl->m_connection.reset();
-    m_impl->m_connected = false;
-    
-    m_status = ConnectionStatus::Disconnected;
-    m_checkedLocations.clear();
-    Printf("Archipelago: Disconnected\n");
-}
-
-// Check if we're currently connected
-bool ArchipelagoClient::IsConnected() const {
-    return m_impl->m_connected && m_status == ConnectionStatus::Connected;
-}
-
-// Process any pending messages (called from main thread)
-void ArchipelagoClient::ProcessMessages() {
-    // Process incoming messages
-    auto messages = m_impl->GetIncomingMessages();
-    for (const auto& message : messages) {
-        HandleMessage(message);
-    }
-}
-
-// Queue a packet for sending
-void ArchipelagoClient::SendPacket(const std::string& json) {
-    if (!m_impl->m_connected) {
-        Printf("Archipelago: Cannot send - not connected\n");
-        return;
-    }
-    
-    m_impl->QueueMessage(json);
-}
-
-// Authenticate to a specific slot
+// Authenticate with server
 void ArchipelagoClient::Authenticate(const std::string& slot, const std::string& password, int version) {
-    Printf("Archipelago: Authenticating as slot: %s\n", slot.c_str());
-    
     if (m_status != ConnectionStatus::Connected) {
         Printf("Archipelago: Cannot authenticate - not connected\n");
         return;
@@ -482,12 +512,13 @@ void ArchipelagoClient::Authenticate(const std::string& slot, const std::string&
     SendPacket(buffer.GetString());
 }
 
-// Send location checks
+// Send location check
 void ArchipelagoClient::SendLocationCheck(int locationId) {
     std::vector<int> locations = { locationId };
     SendLocationChecks(locations);
 }
 
+// Send multiple location checks
 void ArchipelagoClient::SendLocationChecks(const std::vector<int>& locationIds) {
     rapidjson::Document doc;
     doc.SetArray();
@@ -541,7 +572,7 @@ void ArchipelagoClient::StatusUpdate(const std::string& status) {
     SendPacket(buffer.GetString());
 }
 
-// Send a ping packet
+// Send ping
 void ArchipelagoClient::SendPing() {
     rapidjson::Document doc;
     doc.SetArray();
@@ -567,8 +598,6 @@ void ArchipelagoClient::SendPing() {
 
 // Handle incoming message
 void ArchipelagoClient::HandleMessage(const std::string& message) {
-    Printf("Archipelago: Received message: %s\n", message.c_str());
-    
     if (m_messageCallback) {
         m_messageCallback(message);
     }
@@ -576,13 +605,13 @@ void ArchipelagoClient::HandleMessage(const std::string& message) {
     ParsePacket(message);
 }
 
-// Parse incoming packet
+// Parse packet
 void ArchipelagoClient::ParsePacket(const std::string& json) {
     rapidjson::Document doc;
     doc.Parse(json.c_str());
     
     if (doc.HasParseError() || !doc.IsArray() || doc.Empty()) {
-        Printf("Archipelago: Invalid packet received\n");
+        Printf("Archipelago: Invalid packet\n");
         return;
     }
     
@@ -596,7 +625,7 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
         std::string cmd = packet["cmd"].GetString();
         
         if (cmd == "RoomInfo") {
-            Printf("Archipelago: Received RoomInfo - handshake accepted!\n");
+            Printf("Archipelago: Received RoomInfo\n");
             
         } else if (cmd == "Connected") {
             Printf("Archipelago: Authentication successful!\n");
@@ -609,63 +638,18 @@ void ArchipelagoClient::ParsePacket(const std::string& json) {
                 m_team = packet["team"].GetInt();
             }
             
-            if (packet.HasMember("missing_locations")) {
-                const auto& missing = packet["missing_locations"];
-                if (missing.IsArray()) {
-                    Printf("Archipelago: %d unchecked locations\n", missing.Size());
-                }
-            }
-            
         } else if (cmd == "ConnectionRefused") {
             Printf("Archipelago: Connection refused!\n");
             m_status = ConnectionStatus::Error;
             
-            if (packet.HasMember("errors")) {
-                const auto& errors = packet["errors"];
-                if (errors.IsArray()) {
-                    for (rapidjson::SizeType j = 0; j < errors.Size(); j++) {
-                        if (errors[j].IsString()) {
-                            Printf("  Error: %s\n", errors[j].GetString());
-                        }
-                    }
-                }
-            }
-            
         } else if (cmd == "ReceivedItems") {
-            if (!packet.HasMember("items") || !packet["items"].IsArray()) {
-                continue;
-            }
-            
-            const auto& items = packet["items"];
-            for (rapidjson::SizeType j = 0; j < items.Size(); j++) {
-                const auto& item = items[j];
-                
-                int itemId = item["item"].GetInt();
-                int locationId = item["location"].GetInt();
-                int playerSlot = item["player"].GetInt();
-                
-                Printf("Archipelago: Received item %d from location %d (player %d)\n", 
-                       itemId, locationId, playerSlot);
-                
-                if (m_itemReceivedCallback) {
-                    m_itemReceivedCallback(itemId, locationId, playerSlot);
-                }
-            }
-            
-            if (packet.HasMember("index")) {
-                m_lastReceivedIndex = packet["index"].GetInt();
-            }
-            
-        } else if (cmd == "PrintJSON") {
-            if (packet.HasMember("text")) {
-                Printf("Archipelago: %s\n", packet["text"].GetString());
-            }
+            // Handle received items
             
         } else if (cmd == "Bounced") {
             Printf("Archipelago: Pong received\n");
             
         } else {
-            Printf("Archipelago: Received packet type: %s\n", cmd.c_str());
+            Printf("Archipelago: Received: %s\n", cmd.c_str());
         }
     }
 }
