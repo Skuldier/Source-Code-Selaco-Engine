@@ -1,6 +1,3 @@
-// archipelago_client.h
-// Header file for Archipelago client with enhanced debugging support
-
 #pragma once
 
 #include <string>
@@ -9,6 +6,7 @@
 #include <queue>
 #include <mutex>
 #include <vector>
+#include <set>
 #include <chrono>
 
 namespace Archipelago {
@@ -95,31 +93,40 @@ public:
     const std::string& GetSlot() const { return m_slot; }
     int GetSlotId() const { return m_slotId; }
     int GetTeam() const { return m_team; }
+    
+    // Get connection information
+    const std::string& GetHost() const { return m_host; }
+    int GetPort() const { return m_port; }
+
+    // Check if we've already checked a location
+    bool HasCheckedLocation(int locationId) const {
+        return m_checkedLocations.find(locationId) != m_checkedLocations.end();
+    }
 
 private:
-    // Private implementation class
-    // This hides all the WebSocket details from the header
+    // Private implementation
     class Impl;
-    
-    // IMPORTANT: m_impl must be initialized first in constructor
     std::unique_ptr<Impl> m_impl;
+
+    // Connection state
+    ConnectionStatus m_status;
+    std::string m_host;
+    int m_port;
     
-    // Internal methods
+    // Game state
+    std::string m_slot;
+    int m_slotId;
+    int m_team;
+    
+    // Locations we've already checked
+    std::set<int> m_checkedLocations;
+    
+    // Message handling
     void HandleMessage(const std::string& message);
     void ParsePacket(const std::string& json);
     void SendConnectPacket();
     
-    // Connection state
-    ConnectionStatus m_status;
-    
-    // Connection info
-    std::string m_host;
-    int m_port;
-    std::string m_slot;
-    int m_team;
-    int m_slotId;
-    
-    // Message handling
+    // Message queue for outgoing messages
     std::queue<std::string> m_outgoingQueue;
     std::mutex m_queueMutex;
     
@@ -127,20 +134,19 @@ private:
     MessageCallback m_messageCallback;
     ItemReceivedCallback m_itemReceivedCallback;
     
-    // State tracking
+    // For tracking received items
     int m_lastReceivedIndex;
-    std::vector<int> m_checkedLocations;
+    
+    // Timeout tracking
     std::chrono::steady_clock::time_point m_connectionTimeout;
 };
 
-// Global instance (singleton pattern)
-extern ArchipelagoClient* g_archipelago;
-
-// Initialization functions
+// Global functions for engine integration
 void AP_Init();
 void AP_Shutdown();
-
-// Game loop tick function
 void AP_Tick();
+
+// Global client instance
+extern ArchipelagoClient* g_archipelago;
 
 } // namespace Archipelago
