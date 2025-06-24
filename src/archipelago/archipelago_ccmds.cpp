@@ -362,9 +362,11 @@ CCMD(ap_quick)
     }
     
     // Just call ap_test with the same arguments
-    C_DoCommand(FString::Format("ap_test %s %s %s", 
+    FString command;
+    command.Format("ap_test %s %s %s", 
         argv[1], argv[2], 
-        (argv.argc() >= 4) ? argv[3] : "").GetChars());
+        (argv.argc() >= 4) ? argv[3] : "");
+    C_DoCommand(command.GetChars());
 }
 
 // Process messages - called from game loop

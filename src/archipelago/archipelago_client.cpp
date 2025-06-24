@@ -423,7 +423,7 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
     
     Printf("Archipelago: Connecting to %s\n", uri.str().c_str());
     
-    // Set up handlers NOW, right before connecting
+    // Set up handlers BEFORE starting the thread to avoid race conditions
     m_impl->m_client.set_open_handler([this](connection_hdl hdl) {
         m_impl->on_open(hdl);
     });
@@ -441,7 +441,16 @@ bool ArchipelagoClient::Connect(const std::string& host, int port) {
     });
     
     // Start thread if not running
-    m_impl->StartThread();
+    try {
+        m_impl->StartThread();
+    } catch (const std::exception& e) {
+        Printf("Archipelago: Failed to start worker thread: %s\n", e.what());
+        m_status = ConnectionStatus::Error;
+        return false;
+    }
+    
+    // Small delay to ensure thread is ready
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
     // Send connect message to thread
     ThreadMessage msg;
@@ -498,7 +507,7 @@ void ArchipelagoClient::ProcessMessages() {
     // Get messages from worker thread
     auto messages = m_impl->GetFromThread();
     
-    Printf("Archipelago: ProcessMessages - got %d messages\n", (int)messages.size());
+    // Printf("Archipelago: ProcessMessages - got %d messages\n", (int)messages.size());
     
     for (const auto& msg : messages) {
         if (msg.data == "__CONNECTED__") {

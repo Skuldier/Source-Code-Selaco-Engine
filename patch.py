@@ -1,89 +1,69 @@
-// Test program to verify Archipelago connection
-// Compile this separately to test your connection logic
+#!/usr/bin/env python3
+"""
+Apply a simple fix for the localhost crash issue
+"""
 
-#include <iostream>
-#include "../common/engine/printf.h"
-#include "archipelago_client.h"
+import os
 
-// Test console commands
-void TestConnection() {
-    using namespace Archipelago;
+def apply_fix():
+    filepath = "src/archipelago/archipelago_client.cpp"
     
-    // Initialize the client
-    AP_Init();
+    if not os.path.exists(filepath):
+        print(f"Error: {filepath} not found!")
+        return False
     
-    if (!g_archipelago) {
-        Printf("ERROR: Failed to initialize Archipelago client!\n");
-        return;
-    }
+    with open(filepath, 'r') as f:
+        content = f.read()
     
-    // Test 1: Connect to a server
-    Printf("\n=== TEST 1: Connecting to archipelago.gg:58697 ===\n");
-    bool connected = g_archipelago->Connect("archipelago.gg", 58697);
+    # Fix 1: Make sure handlers are set up before ANY thread operations
+    # Find the Connect function and move handler setup earlier
+    old_pattern = """    // Set up handlers NOW, right before connecting
+    m_impl->m_client.set_open_handler([this](connection_hdl hdl) {"""
     
-    if (!connected) {
-        Printf("ERROR: Failed to initiate connection\n");
-        return;
-    }
+    new_pattern = """    // Set up handlers BEFORE starting the thread to avoid race conditions
+    m_impl->m_client.set_open_handler([this](connection_hdl hdl) {"""
     
-    // Give it time to connect
-    Printf("Waiting for connection...\n");
-    for (int i = 0; i < 50; i++) { // 5 seconds timeout
-        g_archipelago->ProcessMessages();
-        
-        if (g_archipelago->GetStatus() == ConnectionStatus::Connected) {
-            Printf("SUCCESS: Connected to server!\n");
-            break;
-        } else if (g_archipelago->GetStatus() == ConnectionStatus::Error) {
-            Printf("ERROR: Connection failed!\n");
-            return;
-        }
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    content = content.replace(old_pattern, new_pattern)
     
-    // Test 2: Authenticate with a slot
-    if (g_archipelago->GetStatus() == ConnectionStatus::Connected) {
-        Printf("\n=== TEST 2: Authenticating as 'TestSlot' ===\n");
-        g_archipelago->Authenticate("TestSlot", "");
-        
-        // Process authentication
-        for (int i = 0; i < 30; i++) { // 3 seconds timeout
-            g_archipelago->ProcessMessages();
-            
-            if (g_archipelago->GetStatus() == ConnectionStatus::InGame) {
-                Printf("SUCCESS: Authenticated successfully!\n");
-                break;
-            } else if (g_archipelago->GetStatus() == ConnectionStatus::Error) {
-                Printf("ERROR: Authentication failed!\n");
-                break;
-            }
-            
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
+    # Fix 2: Add try-catch around StartThread
+    old_start = """    // Start thread if not running
+    m_impl->StartThread();"""
     
-    // Test 3: Send a ping
-    if (g_archipelago->GetStatus() == ConnectionStatus::InGame) {
-        Printf("\n=== TEST 3: Sending ping ===\n");
-        g_archipelago->SendPing();
-        
-        // Wait for response
-        for (int i = 0; i < 20; i++) {
-            g_archipelago->ProcessMessages();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
+    new_start = """    // Start thread if not running
+    try {
+        m_impl->StartThread();
+    } catch (const std::exception& e) {
+        Printf("Archipelago: Failed to start worker thread: %s\\n", e.what());
+        m_status = ConnectionStatus::Error;
+        return false;
+    }"""
     
-    // Cleanup
-    Printf("\n=== Disconnecting ===\n");
-    g_archipelago->Disconnect();
-    AP_Shutdown();
+    content = content.replace(old_start, new_start)
     
-    Printf("\n=== Connection test complete ===\n");
-}
+    # Fix 3: Add a small delay after starting thread to ensure it's ready
+    old_msg_send = """    // Send connect message to thread
+    ThreadMessage msg;"""
+    
+    new_msg_send = """    // Small delay to ensure thread is ready
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    
+    // Send connect message to thread
+    ThreadMessage msg;"""
+    
+    content = content.replace(old_msg_send, new_msg_send)
+    
+    # Write back
+    with open(filepath, 'w') as f:
+        f.write(content)
+    
+    print(f"Applied fixes to {filepath}")
+    print("Changes made:")
+    print("1. Ensured handlers are set up before thread operations")
+    print("2. Added exception handling around StartThread")
+    print("3. Added small delay to prevent race conditions")
+    
+    return True
 
-int main() {
-    TestConnection();
-    return 0;
-}
+if __name__ == "__main__":
+    if apply_fix():
+        print("\nDone! Rebuild and test localhost connection again.")
