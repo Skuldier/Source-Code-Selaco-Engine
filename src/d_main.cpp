@@ -30,9 +30,6 @@
 
 #ifdef _WIN32
 #include <direct.h>
-
-// Forward declaration for Archipelago tick function
-extern void AP_Tick();
 #endif
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -127,7 +124,6 @@ extern void AP_Tick();
 #include "statdb.h"
 
 
-#include "archipelago/archipelago_client.h"
 #ifdef __unix__
 #include "i_system.h"  // for SHARE_DIR
 #endif // __unix__
@@ -1266,10 +1262,6 @@ void D_DoomLoop ()
 				lasttic = gametic;
 				I_StartFrame ();
 			}
-		
-		// Process Archipelago messages
-		Net_ProcessArchipelago();
-		AP_Tick();
 			I_SetFrameTime();
 
 			// process one or more tics
@@ -3920,9 +3912,6 @@ static int D_DoomMain_Internal (void)
 
 	D_DoomInit();
 	
-	// Initialize Archipelago client
-	Archipelago::AP_Init();
-	
 	// [RH] Make sure zdoom.pk3 is always loaded,
 	// as it contains magic stuff we need.
 	wad = BaseFileSearch(BASEWAD, NULL, true, GameConfig);
@@ -4070,9 +4059,8 @@ int GameMain()
 		I_ShowFatalError(error.what());
 		ret = -1;
 	}
-	
-	Archipelago::AP_Shutdown();
-	
+	// Unless something really bad happened, the game should only exit through this single point in the code.
+	// No more 'exit', please.
 	D_Cleanup();
 	CloseNetwork();
 	GC::FinalGC = true;

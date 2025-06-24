@@ -1183,29 +1183,6 @@ set (PCH_SOURCES
 	utility/nodebuilder/nodebuild_utility.cpp
 )
 
-
-# Archipelago integration
-set( ARCHIPELAGO_SOURCES
-	archipelago/archipelago_client.cpp
-	archipelago/archipelago_ccmds.cpp 
-	archipelago/archipelago_client.h)
-
-# Network configuration for Archipelago simple socket client
-# Windows sockets are already linked via ws2_32 in PROJECT_LIBRARIES
-# No additional configuration needed for the simple implementation
-
-
-
-# Disable SSL/TLS support in WebSocketPP (we don't need it for Archipelago)
-
-
-# Set C++11 standard if not already set
-if(NOT CMAKE_CXX_STANDARD)
-    set(CMAKE_CXX_STANDARD 11)
-    set(CMAKE_CXX_STANDARD_REQUIRED ON)
-endif()
-
-
 if( ${HAVE_VM_JIT} )
 	set( PCH_SOURCES ${PCH_SOURCES} ${VM_JIT_SOURCES} )
 else()
@@ -1267,12 +1244,10 @@ set( GAME_SOURCES
 
 )
 
-set( GAME_NONPCH_SOURCES ${GAME_SOURCES}
-	${ARCHIPELAGO_SOURCES} )
+set( GAME_NONPCH_SOURCES ${GAME_SOURCES} )
 list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 
-add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES}
-	${ARCHIPELAGO_SOURCES} )
+add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
 
 target_precompile_headers( zdoom PRIVATE g_pch.h )
 
@@ -1301,7 +1276,6 @@ include_directories(
 	BEFORE
 	.
 	common/audio/sound
-	archipelago
 	common/audio/music
 	common/2d
 	common/cutscenes

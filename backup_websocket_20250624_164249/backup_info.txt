@@ -1,0 +1,6 @@
+WebSocket Implementation Backup
+Created: 20250624_164249
+Files backed up:
+  - src/archipelago/archipelago_client.cpp
+  - src/archipelago/archipelago_client.h
+  - src/archipelago/archipelago_ccmds.cpp

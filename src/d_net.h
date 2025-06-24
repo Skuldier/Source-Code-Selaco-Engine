@@ -94,12 +94,6 @@ extern	int 			nodeforplayer[MAXPLAYERS];
 
 extern	ticcmd_t		netcmds[MAXPLAYERS][BACKUPTICS];
 extern	int 			ticdup;
-// Process Archipelago messages
-void Net_ProcessArchipelago(void);
-
-// Archipelago message processing
-void AP_Tick(void);
-
 
 class player_t;
 class DObject;
