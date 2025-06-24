@@ -2957,9 +2957,9 @@ void Net_SkipCommand (int type, uint8_t **stream)
 
 void Net_ProcessArchipelago()
 {
-	// This function is kept for compatibility but the actual processing
-	// is now done in AP_Tick() which is called from archipelago_ccmds.cpp
-	// The AP_Tick() function is called directly in D_DoomLoop()
+	if (Archipelago::g_archipelago && Archipelago::g_archipelago->IsConnected()) {
+		Archipelago::g_archipelago->ProcessMessages();
+	}
 }
 
 // This was taken out of shared_hud, because UI code shouldn't do low level calculations that may change if the backing implementation changes.

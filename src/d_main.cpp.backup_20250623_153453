@@ -30,9 +30,6 @@
 
 #ifdef _WIN32
 #include <direct.h>
-
-// Forward declaration for Archipelago tick function
-extern void AP_Tick();
 #endif
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -1269,7 +1266,6 @@ void D_DoomLoop ()
 		
 		// Process Archipelago messages
 		Net_ProcessArchipelago();
-		AP_Tick();
 			I_SetFrameTime();
 
 			// process one or more tics

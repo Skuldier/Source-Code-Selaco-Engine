@@ -22,7 +22,7 @@ CCMD(ap_connect)
     }
     
     // Check current status
-    auto status = g_archipelago->GetStatus();
+    auto status = g_archipelago->GetConnectionStatus();
     if (status == ConnectionStatus::Connecting) {
         Printf("Already attempting to connect...\n");
         return;
@@ -100,7 +100,7 @@ CCMD(ap_status)
         return;
     }
     
-    auto status = g_archipelago->GetStatus();
+    auto status = g_archipelago->GetConnectionStatus();
     switch (status) {
         case ConnectionStatus::Disconnected:
             Printf("Archipelago: Disconnected\n");
@@ -192,7 +192,8 @@ CCMD(ap_debug)
     }
 }
 
-// Process messages - called from game loop
+// Also update the tick function to process messages
+// This should be called from the game's main loop
 void AP_Tick() {
     if (g_archipelago) {
         g_archipelago->ProcessMessages();
