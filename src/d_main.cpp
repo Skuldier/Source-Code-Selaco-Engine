@@ -127,6 +127,12 @@
 #include "statdb.h"
 
 using namespace FileSys;
+#ifdef _WIN32
+#undef DrawText
+#undef DrawTextW
+#undef GetMessage
+#undef GetMessageW
+#endif
 
 EXTERN_CVAR(Int, gl_texture_quality)
 EXTERN_CVAR(Int, vk_max_transfer_threads)

@@ -1553,6 +1553,11 @@ source_group("Source Files" FILES ${CMAKE_CURRENT_BINARY_DIR}/sc_man_scanner.h c
 # ARCHIPELAGO WEBSOCKET SUPPORT
 # ===================================================================
 
+# Force static runtime to match main project
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # Fetch libwebsockets
 include(FetchContent)
 
@@ -1561,91 +1566,67 @@ message(STATUS "Configuring libwebsockets for Archipelago support...")
 FetchContent_Declare(
     libwebsockets
     GIT_REPOSITORY https://github.com/warmcat/libwebsockets.git
-    GIT_TAG v4.3.3  # Latest stable - CMake 3.5+
+    GIT_TAG v4.3.3
     GIT_SHALLOW TRUE
 )
 
-# Configure libwebsockets options BEFORE FetchContent_MakeAvailable
-# Minimal build - no compression, no zlib
-set(LWS_WITH_MINIMAL_EXAMPLES OFF CACHE BOOL "" FORCE)
+# Configure libwebsockets options
+set(LWS_WITH_SSL ON CACHE BOOL "" FORCE)
+set(LWS_WITH_SHARED OFF CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_TESTAPPS ON CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_TEST_SERVER ON CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_TEST_CLIENT ON CACHE BOOL "" FORCE)
-set(LWS_WITH_SSL ON CACHE BOOL "" FORCE)
-set(LWS_WITH_SHARED OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_STATIC ON CACHE BOOL "" FORCE)
-
-# COMPLETELY DISABLE COMPRESSION AND ZLIB
-set(LWS_WITHOUT_EXTENSIONS ON CACHE BOOL "" FORCE)  # No WebSocket extensions
-set(LWS_WITH_ZLIB OFF CACHE BOOL "" FORCE)          # No zlib support
-set(LWS_WITH_BUNDLED_ZLIB OFF CACHE BOOL "" FORCE)  # Don't build bundled zlib
-set(LWS_WITH_ZIP_FOPS OFF CACHE BOOL "" FORCE)      # No zip file operations
-
-# Disable other features that might need zlib
-set(LWS_WITH_HTTP2 OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_HTTP_STREAM_COMPRESSION OFF CACHE BOOL "" FORCE)
+set(LWS_WITH_MINIMAL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LWS_WITH_BUNDLED_ZLIB ON CACHE BOOL "" FORCE)
 
 # Windows-specific
 if(WIN32)
-    set(LWS_WITHOUT_DAEMONIZE ON CACHE BOOL "" FORCE)
+    set(LWS_WITH_SYS_ASYNC_DNS OFF CACHE BOOL "" FORCE)
 endif()
 
-# Temporarily set CMAKE_MINIMUM_REQUIRED_VERSION for libwebsockets
-set(CMAKE_MINIMUM_REQUIRED_VERSION 3.5)
-
-# Make libwebsockets available
 FetchContent_MakeAvailable(libwebsockets)
 
-# JSON library for Archipelago protocol
+# JSON library
 FetchContent_Declare(
     json
     URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
 )
 FetchContent_MakeAvailable(json)
 
-# Create Archipelago WebSocket library
+# Create Archipelago library
 add_library(archipelago_websocket STATIC
-    archipelago/lws_client.cpp
-    archipelago/archipelago_protocol.cpp
-    archipelago/archipelago_commands.cpp
-    archipelago/archipelago_client.cpp
+    src/archipelago/lws_client.cpp
+    src/archipelago/archipelago_protocol.cpp
+    src/archipelago/archipelago_commands.cpp
 )
 
-# Set include directories
 target_include_directories(archipelago_websocket 
-    PUBLIC 
-        ${CMAKE_CURRENT_SOURCE_DIR}/archipelago
-    PRIVATE
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/archipelago
+    PRIVATE 
         ${libwebsockets_SOURCE_DIR}/include
         ${libwebsockets_BINARY_DIR}/include
 )
 
-# Link dependencies
 target_link_libraries(archipelago_websocket
-    PUBLIC
-        websockets
-        nlohmann_json::nlohmann_json
+    PUBLIC websockets nlohmann_json::nlohmann_json
 )
 
-# Windows-specific libraries
 if(WIN32)
     target_link_libraries(archipelago_websocket PUBLIC
-        ws2_32
-        iphlpapi
-        psapi
-        userenv
-        crypt32  # For SSL certificate handling
+        ws2_32 iphlpapi psapi userenv crypt32
     )
 endif()
 
-# Visual Studio specific settings
+# Force static runtime
 if(MSVC)
-    # Ensure consistent runtime library usage
     set_property(TARGET archipelago_websocket PROPERTY
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     
-    # Disable specific warnings
-    target_compile_options(archipelago_websocket PRIVATE /wd4996)
+    # Force for libwebsockets too
+    if(TARGET websockets)
+        set_property(TARGET websockets PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
 endif()
 
 # ===================================================================
