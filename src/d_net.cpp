@@ -29,7 +29,7 @@
 
 // === FORCE FIX START ===
 void AP_Update();
-void Net_ProcessArchipelago() { AP_Update(); }
+// void Net_ProcessArchipelago() { AP_Update(); }
 extern void* g_archipelago;
 // === FORCE FIX END ===
 

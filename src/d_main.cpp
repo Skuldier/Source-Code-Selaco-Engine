@@ -40,7 +40,6 @@ using Archipelago::g_archipelago;
 void AP_Init() {}
 void AP_Shutdown() {}  
 void AP_Update() {}
-void Net_ProcessArchipelago() { AP_Update(); }
 // === FORCE FIX END ===
 
 #endif
