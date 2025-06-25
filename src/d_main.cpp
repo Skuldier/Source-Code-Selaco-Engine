@@ -4300,4 +4300,7 @@ CCMD(type)
 		auto data = fileSystem.ReadFile(lump);
 		Printf("%.*s\n", data.size(), data.string());
 	}
+// Fallback command to manually initialize Archipelago
+#include "c_dispatch.h"
+
 }

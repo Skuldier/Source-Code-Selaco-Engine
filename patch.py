@@ -1,64 +1,66 @@
 #!/usr/bin/env python3
 """
-Simple fix - remove Net_ProcessArchipelago from d_main.cpp
+Remove the error at line 4305
 """
 
 import os
 
-def remove_duplicate():
+def remove_error():
     dmain_path = r"C:\Users\Skuldier\Documents\Source-Code-Selaco-Engine\src\d_main.cpp"
     
-    print("🔧 REMOVING DUPLICATE NET_PROCESSARCHIPELAGO")
+    print("🔧 REMOVING ERROR AT LINE 4305")
     print("=" * 60)
     
-    # Read d_main.cpp
+    # Read the file
     with open(dmain_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     
-    # Find Net_ProcessArchipelago
-    found_indices = []
-    in_function = False
-    brace_count = 0
-    func_start = -1
+    print(f"Total lines in file: {len(lines)}")
     
-    for i, line in enumerate(lines):
-        if 'void Net_ProcessArchipelago' in line:
-            print(f"Found at line {i+1}: {line.strip()}")
-            func_start = i
-            in_function = True
+    # Show what's around line 4305
+    if len(lines) > 4304:
+        print("\nContent around line 4305:")
+        for i in range(max(0, 4300), min(len(lines), 4310)):
+            print(f"  {i+1}: {lines[i].rstrip()}")
+        
+        # Find and remove the CCMD block
+        if 'CCMD' in lines[4304]:  # Line 4305 is index 4304
+            print("\nFound CCMD at line 4305, removing it...")
+            
+            # Find the end of the CCMD block
+            start_line = 4304
+            end_line = start_line
             brace_count = 0
-            found_indices.append(i)
-        
-        if in_function:
-            if '{' in line:
-                brace_count += line.count('{')
-            if '}' in line:
-                brace_count -= line.count('}')
-                if brace_count == 0 and func_start >= 0:
-                    # Found end of function
-                    for j in range(func_start, i + 1):
-                        found_indices.append(j)
-                    in_function = False
-    
-    if found_indices:
-        print(f"\nRemoving {len(set(found_indices))} lines...")
-        
-        # Remove lines (in reverse order to maintain indices)
-        for i in sorted(set(found_indices), reverse=True):
-            lines[i] = ''  # Just empty the line instead of removing
-        
-        # Write back
-        with open(dmain_path, 'w', encoding='utf-8') as f:
-            f.writelines(lines)
-        
-        print("✅ Removed Net_ProcessArchipelago from d_main.cpp")
+            
+            for i in range(start_line, min(len(lines), start_line + 100)):
+                if '{' in lines[i]:
+                    brace_count += lines[i].count('{')
+                if '}' in lines[i]:
+                    brace_count -= lines[i].count('}')
+                    if brace_count == 0 and i > start_line:
+                        end_line = i
+                        break
+            
+            # Remove the lines
+            print(f"Removing lines {start_line+1} to {end_line+1}")
+            for i in range(end_line, start_line - 1, -1):
+                lines.pop(i)
+            
+            # Save the file
+            with open(dmain_path, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+            
+            print("✅ Removed problematic CCMD!")
     else:
-        print("✓ Net_ProcessArchipelago not found in d_main.cpp")
+        print("❌ File doesn't have that many lines!")
     
-    print("\n📋 Net_ProcessArchipelago should only be in d_net.cpp")
     print("\n🔨 Now rebuild:")
     print("  cd build")
     print("  cmake --build . --config Debug")
+    
+    print("\n💡 The original ap_connect commands should work if")
+    print("   archipelago_commands.cpp is being compiled.")
+    print("   If not, use the test commands file approach.")
 
 if __name__ == "__main__":
-    remove_duplicate()
+    remove_error()
