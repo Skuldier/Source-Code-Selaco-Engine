@@ -125,7 +125,8 @@
 
 
 #ifdef __unix__
-#include "i_system.h"  // for SHARE_DIR
+#include "i_system.h"  #include "archipelago/archipelago_protocol.h"
+// for SHARE_DIR
 #endif // __unix__
 
 using namespace FileSys;
@@ -184,6 +185,8 @@ void InitWidgetResources(const char* basewad);
 // PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
 
 bool D_CheckNetGame ();
+// Initialize Archipelago support
+Archipelago::AP_Init();
 void D_ProcessEvents ();
 void G_BuildTiccmd (ticcmd_t* cmd);
 void D_DoAdvanceDemo ();
@@ -1260,6 +1263,9 @@ void D_DoomLoop ()
 			if (gametic > lasttic)
 			{
 				lasttic = gametic;
+								// Update Archipelago
+				Archipelago::AP_Update();
+
 				I_StartFrame ();
 			}
 			I_SetFrameTime();
