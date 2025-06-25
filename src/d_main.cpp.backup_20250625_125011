@@ -3489,9 +3489,6 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 	if (!restart)
 		V_Init2();
 
-	// Initialize Archipelago support
-	Archipelago::AP_Init();
-
 	CLOCK_START
 	// [RH] Initialize localizable strings. 
 	GStrings.LoadStrings(fileSystem, language);
