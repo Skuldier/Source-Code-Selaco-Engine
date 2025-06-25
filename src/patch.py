@@ -1,203 +1,171 @@
 #!/usr/bin/env python3
 """
-Fix CMake version compatibility issue with libwebsockets
+Comprehensive diagnostic and fix tool for Archipelago integration in Selaco
 """
 
 import os
+import sys
 import re
-import shutil
-from datetime import datetime
 
-def fix_cmake_version(root_dir):
-    cmake_path = os.path.join(root_dir, "CMakeLists.txt")
+def check_files_exist(archipelago_dir):
+    """Check if all required Archipelago files exist"""
+    required_files = [
+        "lws_client.h",
+        "lws_client.cpp",
+        "archipelago_protocol.h",
+        "archipelago_protocol.cpp",
+        "archipelago_commands.cpp"
+    ]
     
-    print("🔧 Fixing CMake version compatibility issue...")
+    print("🔍 Checking Archipelago source files...")
+    print(f"   Directory: {archipelago_dir}")
+    print()
+    
+    all_exist = True
+    for file in required_files:
+        file_path = os.path.join(archipelago_dir, file)
+        if os.path.exists(file_path):
+            print(f"   ✅ {file} - Found")
+        else:
+            print(f"   ❌ {file} - MISSING!")
+            all_exist = False
+    
+    # List actual files in directory
+    if os.path.exists(archipelago_dir):
+        print("\n📁 Actual files in archipelago directory:")
+        for file in os.listdir(archipelago_dir):
+            if os.path.isfile(os.path.join(archipelago_dir, file)):
+                print(f"   - {file}")
+    else:
+        print(f"\n❌ Directory does not exist: {archipelago_dir}")
+        all_exist = False
+    
+    return all_exist
+
+def analyze_cmake_file(cmake_path):
+    """Analyze the CMakeLists.txt for issues"""
+    print("\n🔍 Analyzing CMakeLists.txt...")
     
     if not os.path.exists(cmake_path):
-        print(f"❌ CMakeLists.txt not found at {cmake_path}")
-        return False
+        print(f"   ❌ CMakeLists.txt not found at: {cmake_path}")
+        return None
     
-    # Backup
-    backup_path = cmake_path + f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    shutil.copy2(cmake_path, backup_path)
-    print(f"✅ Backup created: {backup_path}")
-    
-    # Read current content
     with open(cmake_path, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Find the FetchContent section for libwebsockets
-    fetch_pattern = r'(FetchContent_Declare\s*\(\s*libwebsockets[^)]+\))'
-    match = re.search(fetch_pattern, content, re.DOTALL)
+    # Find Archipelago section
+    archipelago_start = content.find("# ARCHIPELAGO WEBSOCKET SUPPORT")
+    if archipelago_start == -1:
+        print("   ❌ Archipelago section not found in CMakeLists.txt")
+        return None
     
-    if not match:
-        print("❌ Could not find FetchContent_Declare for libwebsockets")
-        return False
+    # Extract the add_library command
+    add_lib_match = re.search(r'add_library\s*\(\s*archipelago_websocket[^)]+\)', content[archipelago_start:], re.DOTALL)
+    if add_lib_match:
+        add_lib_text = add_lib_match.group(0)
+        print(f"   📄 Found add_library command:")
+        print("   " + "\n   ".join(add_lib_text.split('\n')))
+        
+        # Check if paths have 'src/' prefix
+        if 'src/archipelago/' in add_lib_text:
+            print("\n   ⚠️  Issue found: Paths have 'src/' prefix")
+            print("   This causes CMake to look in src/src/archipelago/")
+            return "fix_paths"
     
-    # Replace the entire Archipelago section with the fixed version
-    archipelago_start = content.find("# ===================================================================\n# ARCHIPELAGO WEBSOCKET SUPPORT")
-    archipelago_end = content.find("# END ARCHIPELAGO WEBSOCKET SUPPORT\n# ===================================================================")
+    return "ok"
+
+def fix_cmake_paths(cmake_path):
+    """Fix the source file paths in CMakeLists.txt"""
+    print("\n🔧 Fixing paths in CMakeLists.txt...")
     
-    if archipelago_start == -1 or archipelago_end == -1:
-        print("❌ Could not find Archipelago section markers")
-        return False
+    with open(cmake_path, 'r', encoding='utf-8') as f:
+        content = f.read()
     
-    # Include the end marker
-    archipelago_end = content.find("\n", archipelago_end + len("# END ARCHIPELAGO WEBSOCKET SUPPORT\n# ===================================================================")) + 1
+    # Create backup
+    backup_path = cmake_path + ".backup"
+    with open(backup_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"   📋 Created backup: {backup_path}")
     
-    new_archipelago_section = '''# ===================================================================
-# ARCHIPELAGO WEBSOCKET SUPPORT
-# ===================================================================
-
-# Set minimum CMake version for compatibility
-if(POLICY CMP0048)
-    cmake_policy(SET CMP0048 NEW)
-endif()
-
-# Fetch libwebsockets
-include(FetchContent)
-
-message(STATUS "Configuring libwebsockets for Archipelago support...")
-
-# Set CMake policies for FetchContent
-set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
-set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
-
-FetchContent_Declare(
-    libwebsockets
-    GIT_REPOSITORY https://github.com/warmcat/libwebsockets.git
-    GIT_TAG        v4.3.3
-    GIT_SHALLOW    TRUE
-    # Override the minimum CMake version
-    CMAKE_ARGS     -DCMAKE_MINIMUM_REQUIRED_VERSION=3.5
-)
-
-# Configure libwebsockets options BEFORE FetchContent_MakeAvailable
-set(LWS_WITH_SSL ON CACHE BOOL "" FORCE)
-set(LWS_WITH_SHARED OFF CACHE BOOL "" FORCE)  # Static library
-set(LWS_WITHOUT_TESTAPPS ON CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_TEST_SERVER ON CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_TEST_CLIENT ON CACHE BOOL "" FORCE)
-set(LWS_WITH_MINIMAL_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_BUNDLED_ZLIB ON CACHE BOOL "" FORCE)  # Use bundled zlib on Windows
-set(LWS_WITH_HTTP2 OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_SOCKS5 OFF CACHE BOOL "" FORCE)
-set(LWS_IPV6 ON CACHE BOOL "" FORCE)
-
-# Disable unused features for smaller binary
-set(LWS_WITHOUT_EXTENSIONS OFF CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_BUILTIN_GETIFADDRS OFF CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_BUILTIN_SHA1 OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_CUSTOM_HEADERS ON CACHE BOOL "" FORCE)
-
-# Windows-specific settings
-if(WIN32)
-    set(LWS_WITH_SYS_ASYNC_DNS OFF CACHE BOOL "" FORCE)
-    set(LWS_WITH_LIBUV OFF CACHE BOOL "" FORCE)
-    set(LWS_WITH_LIBEV OFF CACHE BOOL "" FORCE)
-endif()
-
-# Save and restore CMAKE_MINIMUM_REQUIRED_VERSION
-set(SAVED_CMAKE_MINIMUM_REQUIRED_VERSION ${CMAKE_MINIMUM_REQUIRED_VERSION})
-set(CMAKE_MINIMUM_REQUIRED_VERSION 3.5)
-
-# Make libwebsockets available
-FetchContent_MakeAvailable(libwebsockets)
-
-# Restore CMAKE_MINIMUM_REQUIRED_VERSION
-set(CMAKE_MINIMUM_REQUIRED_VERSION ${SAVED_CMAKE_MINIMUM_REQUIRED_VERSION})
-
-# JSON library for Archipelago protocol
-FetchContent_Declare(
-    json
-    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-)
-FetchContent_MakeAvailable(json)
-
-# Create Archipelago WebSocket library
-add_library(archipelago_websocket STATIC
-    src/archipelago/lws_client.cpp
-    src/archipelago/archipelago_protocol.cpp
-    src/archipelago/archipelago_commands.cpp
-)
-
-# Set include directories
-target_include_directories(archipelago_websocket 
-    PUBLIC 
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/archipelago
-    PRIVATE
-        ${libwebsockets_SOURCE_DIR}/include
-        ${libwebsockets_BINARY_DIR}/include
-)
-
-# Link dependencies
-target_link_libraries(archipelago_websocket
-    PUBLIC
-        websockets
-        nlohmann_json::nlohmann_json
-)
-
-# Windows-specific libraries
-if(WIN32)
-    target_link_libraries(archipelago_websocket PUBLIC
-        ws2_32
-        iphlpapi
-        psapi
-        userenv
-        crypt32  # For SSL certificate handling
+    # Fix the paths in add_library
+    original_content = content
+    
+    # Fix source file paths
+    content = re.sub(
+        r'add_library\s*\(\s*archipelago_websocket\s+STATIC\s+src/archipelago/(\w+\.cpp)',
+        r'add_library(archipelago_websocket STATIC\n    archipelago/\1',
+        content
     )
-endif()
-
-# Visual Studio specific settings
-if(MSVC)
-    # Ensure consistent runtime library usage
-    set_property(TARGET archipelago_websocket PROPERTY
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     
-    # Disable specific warnings
-    target_compile_options(archipelago_websocket PRIVATE /wd4996)
-endif()
-
-# ===================================================================
-# END ARCHIPELAGO WEBSOCKET SUPPORT
-# ===================================================================
-'''
+    # Fix additional source files
+    content = content.replace('src/archipelago/lws_client.cpp', 'archipelago/lws_client.cpp')
+    content = content.replace('src/archipelago/archipelago_protocol.cpp', 'archipelago/archipelago_protocol.cpp')
+    content = content.replace('src/archipelago/archipelago_commands.cpp', 'archipelago/archipelago_commands.cpp')
     
-    # Replace the section
-    new_content = content[:archipelago_start] + new_archipelago_section + content[archipelago_end:]
+    # Fix include directory
+    content = content.replace('${CMAKE_CURRENT_SOURCE_DIR}/src/archipelago', '${CMAKE_CURRENT_SOURCE_DIR}/archipelago')
     
-    # Write the fixed content
-    with open(cmake_path, 'w', encoding='utf-8') as f:
-        f.write(new_content)
-    
-    print("✅ Fixed CMake configuration!")
-    print("\n📝 Changes made:")
-    print("  - Added CMAKE policy settings")
-    print("  - Set CMAKE_MINIMUM_REQUIRED_VERSION handling")
-    print("  - Added compatibility fixes for older CMake in libwebsockets")
-    
-    return True
+    if content != original_content:
+        with open(cmake_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print("   ✅ Fixed paths in CMakeLists.txt")
+        return True
+    else:
+        print("   ℹ️  No changes needed")
+        return False
 
 def main():
-    import sys
+    root_dir = r"C:\Users\Skuldier\Documents\Source-Code-Selaco-Engine"
     
-    if len(sys.argv) < 2:
-        root_dir = r"C:\Users\Skuldier\Documents\Source-Code-Selaco-Engine"
-        print(f"Using default path: {root_dir}")
-    else:
+    if len(sys.argv) > 1:
         root_dir = sys.argv[1]
     
-    if fix_cmake_version(root_dir):
-        print("\n✅ Fix applied successfully!")
-        print("\n🔨 Try building again:")
-        print("  cd build")
-        print("  cmake -G \"Visual Studio 17 2022\" -A x64 ..")
-        print("\nIf it still fails, try:")
-        print("  1. Delete the build directory completely")
-        print("  2. Create a fresh build directory")
-        print("  3. Run cmake again")
+    print("🚀 Archipelago Integration Diagnostic Tool")
+    print("=" * 60)
+    print(f"📁 Selaco source directory: {root_dir}")
+    
+    # Check paths
+    archipelago_dir = os.path.join(root_dir, "src", "archipelago")
+    cmake_path = os.path.join(root_dir, "src", "CMakeLists.txt")
+    
+    # Step 1: Check if files exist
+    files_ok = check_files_exist(archipelago_dir)
+    
+    # Step 2: Analyze CMake file
+    cmake_status = analyze_cmake_file(cmake_path)
+    
+    # Step 3: Apply fixes if needed
+    if cmake_status == "fix_paths":
+        if fix_cmake_paths(cmake_path):
+            print("\n✅ Successfully fixed CMake configuration!")
+    
+    # Final recommendations
+    print("\n📋 Next Steps:")
+    print("=" * 60)
+    
+    if not files_ok:
+        print("1. ❌ First, ensure all required source files are in:")
+        print(f"   {archipelago_dir}")
+        print("   You need: lws_client.cpp/h, archipelago_protocol.cpp/h, archipelago_commands.cpp")
     else:
-        print("\n❌ Failed to apply fix")
+        print("1. ✅ All source files are present")
+    
+    print("\n2. Clean your build directory:")
+    print("   cd C:\\Users\\Skuldier\\Documents\\Source-Code-Selaco-Engine")
+    print("   rmdir /s /q build")
+    print("   mkdir build")
+    print("   cd build")
+    
+    print('\n3. Run CMake again:')
+    print('   cmake -G "Visual Studio 17 2022" -A x64 ..')
+    
+    print("\n4. If you still get errors, check:")
+    print("   - That you're running CMake from the build directory")
+    print("   - That Visual Studio 2022 is installed with C++ support")
+    print("   - That you have Git installed (for FetchContent)")
+    
+    print("\n💡 Tip: If CMake still fails, try running this script again")
+    print("   to see if there are any remaining issues.")
 
 if __name__ == "__main__":
     main()

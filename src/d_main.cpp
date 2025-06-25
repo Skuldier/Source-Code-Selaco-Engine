@@ -126,6 +126,7 @@
 
 #ifdef __unix__
 #include "i_system.h"  #include "archipelago/archipelago_protocol.h"
+#include "archipelago/archipelago_client.h"
 // for SHARE_DIR
 #endif // __unix__
 
@@ -1264,7 +1265,7 @@ void D_DoomLoop ()
 			{
 				lasttic = gametic;
 								// Update Archipelago
-				Archipelago::AP_Update();
+				AP_Update();
 
 				I_StartFrame ();
 			}

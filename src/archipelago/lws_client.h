@@ -33,6 +33,11 @@ struct SessionData {
 
 class LWSClient {
 public:
+    // LibWebSockets callback (must be public)
+    static int websocketCallback(struct lws* wsi, enum lws_callback_reasons reason,
+                                void* user, void* in, size_t len);
+
+    // LibWebSockets callback (must be static and public)
     LWSClient();
     ~LWSClient();
 
@@ -59,8 +64,6 @@ public:
 
 private:
     // LibWebSockets callback (must be static)
-    static int websocketCallback(struct lws* wsi, enum lws_callback_reasons reason,
-                                void* user, void* in, size_t len);
 
     // Internal methods
     void processReceivedData(const std::string& data);

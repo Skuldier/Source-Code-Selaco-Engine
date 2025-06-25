@@ -1270,8 +1270,7 @@ if( UNIX )
 	endif()
 endif()
 
-target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} 
-	archipelago_websocket)
+target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} )
 
 include_directories(
 	BEFORE
@@ -1563,32 +1562,29 @@ FetchContent_Declare(
 )
 
 # Configure libwebsockets options BEFORE FetchContent_MakeAvailable
-# Minimal build - no compression, no zlib
-set(LWS_WITH_MINIMAL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LWS_WITH_SSL ON CACHE BOOL "" FORCE)
+set(LWS_WITH_SHARED OFF CACHE BOOL "" FORCE)  # Static library
 set(LWS_WITHOUT_TESTAPPS ON CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_TEST_SERVER ON CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_TEST_CLIENT ON CACHE BOOL "" FORCE)
-set(LWS_WITH_SSL ON CACHE BOOL "" FORCE)
-set(LWS_WITH_SHARED OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_STATIC ON CACHE BOOL "" FORCE)
-
-# COMPLETELY DISABLE COMPRESSION AND ZLIB
-set(LWS_WITHOUT_EXTENSIONS ON CACHE BOOL "" FORCE)  # No WebSocket extensions
-set(LWS_WITH_ZLIB OFF CACHE BOOL "" FORCE)          # No zlib support
-set(LWS_WITH_BUNDLED_ZLIB OFF CACHE BOOL "" FORCE)  # Don't build bundled zlib
-set(LWS_WITH_ZIP_FOPS OFF CACHE BOOL "" FORCE)      # No zip file operations
-
-# Disable other features that might need zlib
+set(LWS_WITH_MINIMAL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LWS_WITH_BUNDLED_ZLIB ON CACHE BOOL "" FORCE)  # Use bundled zlib on Windows
 set(LWS_WITH_HTTP2 OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_HTTP_STREAM_COMPRESSION OFF CACHE BOOL "" FORCE)
+set(LWS_WITH_SOCKS5 OFF CACHE BOOL "" FORCE)
+set(LWS_IPV6 ON CACHE BOOL "" FORCE)
 
-# Windows-specific
+# Disable unused features for smaller binary
+set(LWS_WITHOUT_EXTENSIONS OFF CACHE BOOL "" FORCE)
+set(LWS_WITHOUT_BUILTIN_GETIFADDRS OFF CACHE BOOL "" FORCE)
+set(LWS_WITHOUT_BUILTIN_SHA1 OFF CACHE BOOL "" FORCE)
+set(LWS_WITH_CUSTOM_HEADERS ON CACHE BOOL "" FORCE)
+
+# Windows-specific settings
 if(WIN32)
-    set(LWS_WITHOUT_DAEMONIZE ON CACHE BOOL "" FORCE)
+    set(LWS_WITH_SYS_ASYNC_DNS OFF CACHE BOOL "" FORCE)
+    set(LWS_WITH_LIBUV OFF CACHE BOOL "" FORCE)
+    set(LWS_WITH_LIBEV OFF CACHE BOOL "" FORCE)
 endif()
-
-# Temporarily set CMAKE_MINIMUM_REQUIRED_VERSION for libwebsockets
-set(CMAKE_MINIMUM_REQUIRED_VERSION 3.5)
 
 # Make libwebsockets available
 FetchContent_MakeAvailable(libwebsockets)
@@ -1602,16 +1598,15 @@ FetchContent_MakeAvailable(json)
 
 # Create Archipelago WebSocket library
 add_library(archipelago_websocket STATIC
-    archipelago/lws_client.cpp
-    archipelago/archipelago_protocol.cpp
-    archipelago/archipelago_commands.cpp
-    archipelago/archipelago_client.cpp
+    src/archipelago/lws_client.cpp
+    src/archipelago/archipelago_protocol.cpp
+    src/archipelago/archipelago_commands.cpp
 )
 
 # Set include directories
 target_include_directories(archipelago_websocket 
     PUBLIC 
-        ${CMAKE_CURRENT_SOURCE_DIR}/archipelago
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/archipelago
     PRIVATE
         ${libwebsockets_SOURCE_DIR}/include
         ${libwebsockets_BINARY_DIR}/include
