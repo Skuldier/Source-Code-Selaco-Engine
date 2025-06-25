@@ -1242,6 +1242,9 @@ set( GAME_SOURCES
 	common/filesystem/source/unicode.cpp
 	common/filesystem/source/critsec.cpp
 
+	archipelago/lws_client.cpp
+	archipelago/archipelago_protocol.cpp
+	archipelago/archipelago_commands.cpp
 )
 
 set( GAME_NONPCH_SOURCES ${GAME_SOURCES} )

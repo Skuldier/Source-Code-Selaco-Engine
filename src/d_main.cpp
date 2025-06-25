@@ -31,16 +31,6 @@
 #ifdef _WIN32
 #include <direct.h>
 
-// === FORCE FIX START ===
-namespace Archipelago {
-    class ArchipelagoClient {};
-    static ArchipelagoClient* g_archipelago = nullptr;
-}
-using Archipelago::g_archipelago;
-void AP_Shutdown() {}  
-void AP_Update() {}
-// === FORCE FIX END ===
-
 #endif
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -131,15 +121,10 @@ void AP_Update() {}
 #include "shiftstate.h"
 #include "s_loader.h"
 #include "fs_findfile.h"
+#include "archipelago/archipelago_protocol.h"
+#include "archipelago/archipelago_client.h"
 
 #include "statdb.h"
-
-
-#ifdef __unix__
-#include "i_system.h"  #include "archipelago/archipelago_protocol.h"
-#include "archipelago/archipelago_client.h"
-// for SHARE_DIR
-#endif // __unix__
 
 using namespace FileSys;
 
@@ -3488,7 +3473,8 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 		V_Init2();
 
 	// Initialize Archipelago support
-
+    Archipelago::AP_Init();
+	
 	CLOCK_START
 	// [RH] Initialize localizable strings. 
 	GStrings.LoadStrings(fileSystem, language);
