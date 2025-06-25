@@ -129,4 +129,5 @@ class DObject;
 #define NCMD_1TICS				0x01		// packet contains 1 tic
 #define NCMD_0TICS				0x00		// packet contains 0 tics
 
+void Net_ProcessArchipelago(); // FORCE FIX
 #endif

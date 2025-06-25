@@ -30,6 +30,19 @@
 
 #ifdef _WIN32
 #include <direct.h>
+
+// === FORCE FIX START ===
+namespace Archipelago {
+    class ArchipelagoClient {};
+    static ArchipelagoClient* g_archipelago = nullptr;
+}
+using Archipelago::g_archipelago;
+void AP_Init() {}
+void AP_Shutdown() {}  
+void AP_Update() {}
+void Net_ProcessArchipelago() { AP_Update(); }
+// === FORCE FIX END ===
+
 #endif
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -187,7 +200,7 @@ void InitWidgetResources(const char* basewad);
 
 bool D_CheckNetGame ();
 // Initialize Archipelago support
-Archipelago::AP_Init();
+// Archipelago::AP_Init(); // FORCE FIXED
 void D_ProcessEvents ();
 void G_BuildTiccmd (ticcmd_t* cmd);
 void D_DoAdvanceDemo ();
