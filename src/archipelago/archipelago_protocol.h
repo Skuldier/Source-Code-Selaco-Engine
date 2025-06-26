@@ -112,8 +112,10 @@ private:
 extern ArchipelagoClient* g_archipelago;
 
 // Engine integration functions
+extern "C" {
 void AP_Init();
 void AP_Shutdown();
 void AP_Update();
+}
 
 } // namespace Archipelago

@@ -81,7 +81,7 @@ extern void* g_archipelago;
 #include "d_main.h"
 #include "i_interface.h"
 #include "savegamemanager.h"
-#include "archipelago/archipelago.h"
+#include "archipelago/archipelago_protocol.h"
 
 EXTERN_CVAR (Int, disableautosave)
 EXTERN_CVAR (Int, autosavecount)
