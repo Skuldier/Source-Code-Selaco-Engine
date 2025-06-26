@@ -1583,19 +1583,14 @@ set(LWS_WITHOUT_TESTAPPS ON CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_TEST_SERVER ON CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_TEST_CLIENT ON CACHE BOOL "" FORCE)
 set(LWS_WITH_MINIMAL_EXAMPLES OFF CACHE BOOL "" FORCE)
-
-# Completely disable zlib and compression
-set(LWS_WITH_ZLIB OFF CACHE BOOL "" FORCE)
 set(LWS_WITH_BUNDLED_ZLIB OFF CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_EXTENSIONS ON CACHE BOOL "" FORCE)
-set(LWS_WITH_ZIP_FOPS OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_HTTP_STREAM_COMPRESSION OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_HTTP_BROTLI OFF CACHE BOOL "" FORCE)
-
-# Other options
+set(LWS_WITHOUT_EXTENSIONS ON CACHE BOOL "" FORCE)  # Disable compression extensions
 set(LWS_WITH_HTTP2 OFF CACHE BOOL "" FORCE)
 set(LWS_WITH_SOCKS5 OFF CACHE BOOL "" FORCE)
 set(LWS_IPV6 ON CACHE BOOL "" FORCE)
+
+# Disable unused features for smaller binary
+set(LWS_WITHOUT_EXTENSIONS OFF CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_BUILTIN_GETIFADDRS OFF CACHE BOOL "" FORCE)
 set(LWS_WITHOUT_BUILTIN_SHA1 OFF CACHE BOOL "" FORCE)
 set(LWS_WITH_CUSTOM_HEADERS ON CACHE BOOL "" FORCE)
@@ -1629,7 +1624,6 @@ add_library(archipelago_websocket STATIC
     archipelago/lws_client.cpp
     archipelago/archipelago_protocol.cpp
     archipelago/archipelago_commands.cpp
-    archipelago/archipelago_client.cpp
 )
 
 # Set include directories

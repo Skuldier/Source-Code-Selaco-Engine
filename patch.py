@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-Fix runtime library mismatch in CMakeLists.txt
+Comprehensive fix for all Archipelago integration issues in Selaco
+This script:
+1. Removes duplicate function definitions
+2. Updates CMakeLists.txt with all necessary files
+3. Fixes libwebsockets zlib configuration
+4. Creates dummy zlib.h if needed
 """
 
 import os
@@ -8,217 +13,205 @@ import re
 import shutil
 from datetime import datetime
 
-def fix_cmake_runtime_library(root_dir):
-    cmake_path = os.path.join(root_dir, "CMakeLists.txt")
-    
-    print("🔧 Fixing runtime library mismatch...")
-    
-    if not os.path.exists(cmake_path):
-        print(f"❌ CMakeLists.txt not found at {cmake_path}")
+def backup_file(file_path):
+    """Create a backup of the file"""
+    if os.path.exists(file_path):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = f"{file_path}.backup_{timestamp}"
+        shutil.copy2(file_path, backup_path)
+        print(f"✅ Backup created: {backup_path}")
+        return backup_path
+    return None
+
+def fix_archipelago_client_cpp(file_path):
+    """Remove duplicate AP_Init, AP_Shutdown, AP_Update functions"""
+    if not os.path.exists(file_path):
+        print(f"⚠️  Skipping {file_path} - file not found")
         return False
     
-    # Backup
-    backup_path = cmake_path + f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    shutil.copy2(cmake_path, backup_path)
-    print(f"✅ Backup created: {backup_path}")
+    print(f"📝 Fixing duplicate definitions in archipelago_client.cpp...")
+    backup_file(file_path)
     
-    # Read current content
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Remove the specific duplicate functions
+    # Pattern to match the duplicate function definitions
+    patterns_to_remove = [
+        r'void\s+AP_Init\s*\(\s*\)\s*\{[^}]*\}',
+        r'void\s+AP_Shutdown\s*\(\s*\)\s*\{[^}]*\}',
+        r'void\s+AP_Update\s*\(\s*\)\s*\{[^}]*\}',
+    ]
+    
+    for pattern in patterns_to_remove:
+        # Find matches with proper brace counting
+        matches = list(re.finditer(pattern, content, re.DOTALL))
+        for match in reversed(matches):  # Process in reverse to maintain indices
+            # Check if this is within the first part of the file (not in extern "C")
+            before_text = content[:match.start()]
+            if 'extern "C"' not in before_text or before_text.count('extern "C"') > before_text.count('}'):
+                # This is the duplicate we want to remove
+                print(f"  Removing duplicate: {match.group()[:50]}...")
+                content = content[:match.start()] + content[match.end():]
+    
+    # Write the fixed content
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    
+    print("✅ Fixed archipelago_client.cpp")
+    return True
+
+def update_cmake_lists(cmake_path):
+    """Update CMakeLists.txt to include all Archipelago files"""
+    if not os.path.exists(cmake_path):
+        print(f"⚠️  Skipping CMakeLists.txt update - file not found")
+        return False
+    
+    print(f"📝 Updating CMakeLists.txt...")
+    backup_file(cmake_path)
+    
     with open(cmake_path, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Find the Archipelago section
-    archipelago_start = content.find("# ===================================================================\n# ARCHIPELAGO WEBSOCKET SUPPORT")
-    archipelago_end = content.find("# END ARCHIPELAGO WEBSOCKET SUPPORT\n# ===================================================================")
+    # Find the archipelago_websocket library section
+    pattern = r'(add_library\s*\(\s*archipelago_websocket\s+STATIC\s*\n)(.*?)(\))'
+    match = re.search(pattern, content, re.DOTALL)
     
-    if archipelago_start == -1 or archipelago_end == -1:
-        print("❌ Could not find Archipelago section markers")
-        return False
-    
-    # Include the end marker
-    archipelago_end = content.find("\n", archipelago_end + len("# END ARCHIPELAGO WEBSOCKET SUPPORT\n# ===================================================================")) + 1
-    
-    new_archipelago_section = '''# ===================================================================
-# ARCHIPELAGO WEBSOCKET SUPPORT
-# ===================================================================
-
-# Fetch libwebsockets
-include(FetchContent)
-
-message(STATUS "Configuring libwebsockets for Archipelago support...")
-
-# Determine the runtime library setting from the main project
-if(MSVC)
-    # Get the current runtime library setting
-    set(CMAKE_MSVC_RUNTIME_LIBRARY_DEFAULT "")
-    if(NOT CMAKE_MSVC_RUNTIME_LIBRARY)
-        # Infer from existing flags or default to static for release builds
-        string(FIND "${CMAKE_CXX_FLAGS_RELEASE}" "/MT" MT_POS)
-        string(FIND "${CMAKE_CXX_FLAGS_RELEASE}" "/MD" MD_POS)
-        if(MT_POS GREATER -1)
-            set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        elseif(MD_POS GREATER -1)
-            set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-        else
-            # Default to static runtime to match zdoom
-            set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        endif()
-    endif()
-    message(STATUS "Using MSVC runtime library: ${CMAKE_MSVC_RUNTIME_LIBRARY}")
-endif()
-
-FetchContent_Declare(
-    libwebsockets
-    GIT_REPOSITORY https://github.com/warmcat/libwebsockets.git
-    GIT_TAG v4.3.3  # Latest stable - CMake 3.5+
-    GIT_SHALLOW TRUE
-)
-
-# Configure libwebsockets options BEFORE FetchContent_MakeAvailable
-set(LWS_WITH_SSL ON CACHE BOOL "" FORCE)
-set(LWS_WITH_SHARED OFF CACHE BOOL "" FORCE)  # Static library
-set(LWS_WITHOUT_TESTAPPS ON CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_TEST_SERVER ON CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_TEST_CLIENT ON CACHE BOOL "" FORCE)
-set(LWS_WITH_MINIMAL_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_BUNDLED_ZLIB ON CACHE BOOL "" FORCE)  # Use bundled zlib on Windows
-set(LWS_WITH_HTTP2 OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_SOCKS5 OFF CACHE BOOL "" FORCE)
-set(LWS_IPV6 ON CACHE BOOL "" FORCE)
-
-# Disable unused features for smaller binary
-set(LWS_WITHOUT_EXTENSIONS OFF CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_BUILTIN_GETIFADDRS OFF CACHE BOOL "" FORCE)
-set(LWS_WITHOUT_BUILTIN_SHA1 OFF CACHE BOOL "" FORCE)
-set(LWS_WITH_CUSTOM_HEADERS ON CACHE BOOL "" FORCE)
-
-# Windows-specific settings
-if(WIN32)
-    set(LWS_WITH_SYS_ASYNC_DNS OFF CACHE BOOL "" FORCE)
-    set(LWS_WITH_LIBUV OFF CACHE BOOL "" FORCE)
-    set(LWS_WITH_LIBEV OFF CACHE BOOL "" FORCE)
-endif()
-
-# Make libwebsockets available
-FetchContent_MakeAvailable(libwebsockets)
-
-# JSON library for Archipelago protocol
-FetchContent_Declare(
-    json
-    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-)
-FetchContent_MakeAvailable(json)
-
-# Create Archipelago WebSocket library
-add_library(archipelago_websocket STATIC
-    src/archipelago/lws_client.cpp
-    src/archipelago/archipelago_protocol.cpp
-    src/archipelago/archipelago_commands.cpp
-)
-
-# Set include directories
-target_include_directories(archipelago_websocket 
-    PUBLIC 
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/archipelago
-    PRIVATE
-        ${libwebsockets_SOURCE_DIR}/include
-        ${libwebsockets_BINARY_DIR}/include
-)
-
-# Link dependencies
-target_link_libraries(archipelago_websocket
-    PUBLIC
-        websockets
-        nlohmann_json::nlohmann_json
-)
-
-# Windows-specific libraries
-if(WIN32)
-    target_link_libraries(archipelago_websocket PUBLIC
-        ws2_32
-        iphlpapi
-        psapi
-        userenv
-        crypt32  # For SSL certificate handling
-    )
-endif()
-
-# Visual Studio specific settings
-if(MSVC)
-    # Ensure consistent runtime library usage with the main project
-    set_property(TARGET archipelago_websocket PROPERTY
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    
-    # Also set it for libwebsockets if possible
-    if(TARGET websockets)
-        set_property(TARGET websockets PROPERTY
-            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    endif()
-    
-    # Disable specific warnings
-    target_compile_options(archipelago_websocket PRIVATE /wd4996)
-    
-    # Ensure proper C++ standard
-    target_compile_features(archipelago_websocket PUBLIC cxx_std_17)
-endif()
-
-# Add to the main target
-# Find where zdoom target links its libraries and add archipelago_websocket
-# (This assumes the main target is called 'zdoom' - adjust if different)
-if(TARGET zdoom)
-    target_link_libraries(zdoom PRIVATE archipelago_websocket)
-endif()
-
-# ===================================================================
-# END ARCHIPELAGO WEBSOCKET SUPPORT
-# ==================================================================='''
-    
-    # Replace the section
-    new_content = content[:archipelago_start] + new_archipelago_section + content[archipelago_end:]
-    
-    # Write the fixed content
-    with open(cmake_path, 'w', encoding='utf-8') as f:
-        f.write(new_content)
-    
-    print("✅ Fixed CMake configuration!")
-    print("\n📝 Changes made:")
-    print("  - Added runtime library detection")
-    print("  - Forced static runtime library for all targets")
-    print("  - Added proper MSVC_RUNTIME_LIBRARY settings")
-    
-    return True
-
-def clean_build_directory(root_dir):
-    """Clean the build directory to ensure fresh build"""
-    build_dir = os.path.join(root_dir, "build")
-    
-    if os.path.exists(build_dir):
-        print("\n🧹 Cleaning build directory...")
-        
-        # Remove specific problematic directories
-        dirs_to_clean = [
-            "_deps/libwebsockets-build",
-            "_deps/libwebsockets-subbuild",
-            "_deps/json-build",
-            "_deps/json-subbuild",
-            "CMakeFiles",
-            "src/archipelago"
+    if match:
+        # Ensure all files are listed
+        required_files = [
+            'archipelago/lws_client.cpp',
+            'archipelago/archipelago_protocol.cpp',
+            'archipelago/archipelago_commands.cpp',
+            'archipelago/archipelago_client.cpp'
         ]
         
-        for dir_name in dirs_to_clean:
-            dir_path = os.path.join(build_dir, dir_name)
-            if os.path.exists(dir_path):
-                print(f"  Removing {dir_name}...")
-                shutil.rmtree(dir_path, ignore_errors=True)
+        files_section = match.group(2)
+        new_files_lines = []
         
-        # Remove CMakeCache
-        cache_file = os.path.join(build_dir, "CMakeCache.txt")
-        if os.path.exists(cache_file):
-            os.remove(cache_file)
-            print("  Removed CMakeCache.txt")
+        for file in required_files:
+            if file not in files_section:
+                print(f"  Adding missing file: {file}")
+            new_files_lines.append(f"    {file}")
         
-        print("✅ Build directory cleaned")
+        new_files_section = '\n'.join(new_files_lines) + '\n'
+        new_content = content[:match.start()] + match.group(1) + new_files_section + match.group(3) + content[match.end():]
+        
+        # Also ensure zlib is disabled in libwebsockets config
+        new_content = re.sub(
+            r'set\(LWS_WITH_BUNDLED_ZLIB\s+\w+\s+CACHE\s+BOOL[^)]+\)',
+            'set(LWS_WITH_BUNDLED_ZLIB OFF CACHE BOOL "" FORCE)',
+            new_content
+        )
+        
+        # Add missing zlib configuration if not present
+        if 'LWS_WITH_ZLIB OFF' not in new_content:
+            # Find where to insert it (after LWS_WITH_BUNDLED_ZLIB)
+            bundled_zlib_match = re.search(r'set\(LWS_WITH_BUNDLED_ZLIB[^)]+\)', new_content)
+            if bundled_zlib_match:
+                insert_pos = bundled_zlib_match.end()
+                new_content = (new_content[:insert_pos] + 
+                             '\nset(LWS_WITH_ZLIB OFF CACHE BOOL "" FORCE)' +
+                             '\nset(LWS_WITH_ZIP_FOPS OFF CACHE BOOL "" FORCE)' +
+                             new_content[insert_pos:])
+        
+        with open(cmake_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        
+        print("✅ Updated CMakeLists.txt")
+        return True
+    else:
+        print("⚠️  Could not find archipelago_websocket section in CMakeLists.txt")
+        return False
+
+def create_dummy_zlib_h(archipelago_dir):
+    """Create a dummy zlib.h for libwebsockets when compression is disabled"""
+    zlib_path = os.path.join(archipelago_dir, 'zlib.h')
+    
+    if os.path.exists(zlib_path):
+        print(f"✅ zlib.h already exists at {zlib_path}")
+        return True
+    
+    print(f"📝 Creating dummy zlib.h...")
+    
+    zlib_content = '''/* Minimal dummy zlib.h to satisfy libwebsockets when compression is disabled */
+#ifndef ZLIB_H
+#define ZLIB_H
+
+/* Basic defines that libwebsockets might check for */
+#define ZLIB_VERSION "1.2.11"
+#define ZLIB_VERNUM 0x12b0
+
+/* Return codes */
+#define Z_OK            0
+#define Z_STREAM_END    1
+#define Z_NEED_DICT     2
+#define Z_ERRNO        (-1)
+#define Z_STREAM_ERROR (-2)
+#define Z_DATA_ERROR   (-3)
+#define Z_MEM_ERROR    (-4)
+#define Z_BUF_ERROR    (-5)
+
+/* Compression levels */
+#define Z_NO_COMPRESSION         0
+#define Z_BEST_SPEED             1
+#define Z_BEST_COMPRESSION       9
+#define Z_DEFAULT_COMPRESSION  (-1)
+
+/* Dummy structures */
+typedef struct z_stream_s {
+    void *opaque;
+    int data_type;
+    unsigned long adler;
+    unsigned long reserved;
+} z_stream;
+
+typedef z_stream *z_streamp;
+
+/* We don't actually implement these, just declare them */
+extern int inflateInit(z_streamp strm);
+extern int inflate(z_streamp strm, int flush);
+extern int inflateEnd(z_streamp strm);
+extern int deflateInit(z_streamp strm, int level);
+extern int deflate(z_streamp strm, int flush);
+extern int deflateEnd(z_streamp strm);
+
+#endif /* ZLIB_H */
+'''
+    
+    with open(zlib_path, 'w', encoding='utf-8') as f:
+        f.write(zlib_content)
+    
+    print(f"✅ Created dummy zlib.h at {zlib_path}")
+    return True
+
+def check_all_files_exist(src_dir):
+    """Check that all required Archipelago files exist"""
+    print("\n📂 Checking required files...")
+    
+    required_files = [
+        "archipelago/lws_client.h",
+        "archipelago/lws_client.cpp",
+        "archipelago/archipelago_protocol.h",
+        "archipelago/archipelago_protocol.cpp",
+        "archipelago/archipelago_client.h",
+        "archipelago/archipelago_client.cpp",
+        "archipelago/archipelago_commands.cpp"
+    ]
+    
+    all_present = True
+    for file in required_files:
+        file_path = os.path.join(src_dir, file)
+        if os.path.exists(file_path):
+            print(f"  ✅ Found: {file}")
+        else:
+            print(f"  ❌ Missing: {file}")
+            all_present = False
+    
+    return all_present
 
 def main():
+    """Main function to apply all fixes"""
     import sys
     
     if len(sys.argv) < 2:
@@ -227,21 +220,53 @@ def main():
     else:
         root_dir = sys.argv[1]
     
-    if fix_cmake_runtime_library(root_dir):
-        clean_build_directory(root_dir)
-        
-        print("\n✅ Fix applied successfully!")
-        print("\n🔨 Now rebuild with these steps:")
-        print("  1. Open a Visual Studio command prompt")
-        print("  2. cd build")
-        print("  3. cmake -G \"Visual Studio 17 2022\" -A x64 ..")
-        print("  4. cmake --build . --config Debug")
-        print("\nOr for a completely clean build:")
-        print("  1. Delete the entire build directory")
-        print("  2. Create a new build directory")
-        print("  3. Run cmake again")
+    print("🔧 Comprehensive Archipelago Integration Fix")
+    print("=" * 50)
+    
+    # Define paths
+    src_dir = os.path.join(root_dir, "src")
+    archipelago_dir = os.path.join(src_dir, "archipelago")
+    archipelago_client_cpp = os.path.join(archipelago_dir, "archipelago_client.cpp")
+    cmake_path = os.path.join(src_dir, "CMakeLists.txt")
+    
+    # Apply fixes
+    success = True
+    
+    # 1. Fix duplicate definitions
+    if not fix_archipelago_client_cpp(archipelago_client_cpp):
+        success = False
+    
+    # 2. Update CMakeLists.txt
+    if not update_cmake_lists(cmake_path):
+        success = False
+    
+    # 3. Create dummy zlib.h
+    if not create_dummy_zlib_h(archipelago_dir):
+        success = False
+    
+    # 4. Check all files exist
+    if not check_all_files_exist(src_dir):
+        success = False
+    
+    print("\n" + "=" * 50)
+    
+    if success:
+        print("✅ All fixes applied successfully!")
+        print("\n🔨 Next steps:")
+        print("  1. Clean rebuild is recommended:")
+        print(f"     cd {root_dir}")
+        print("     rmdir /s /q build")
+        print("     mkdir build")
+        print("     cd build")
+        print("     cmake -G \"Visual Studio 17 2022\" -A x64 ..")
+        print("     cmake --build . --config Release")
+        print("\n✅ The duplicate definition error should now be fixed!")
+        print("\n📝 Test with these console commands in game:")
+        print("  ap_connect localhost 38281")
+        print("  ap_auth Player1")
+        print("  ap_status")
     else:
-        print("\n❌ Failed to apply fix")
+        print("⚠️  Some issues were encountered. Please check the output above.")
 
 if __name__ == "__main__":
     main()
